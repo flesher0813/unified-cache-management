@@ -31,12 +31,13 @@ size_t Metrics::max_vector_len_{10000};
 
 void Metrics::CreateStats(const std::string& name, const std::string& type)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> write_lock(mutex_);
     std::string type_upper = type;
     std::transform(type_upper.begin(), type_upper.end(), type_upper.begin(), ::toupper);
     if (stats_type_.count(name)) {
         return;
     } else {
+        stats_mutex_.emplace(name, std::mutex());
         if (type_upper == "COUNTER") {
             stats_type_[name] = MetricType::COUNTER;
         } else if (type_upper == "GAUGE") {
@@ -49,11 +50,18 @@ void Metrics::CreateStats(const std::string& name, const std::string& type)
     }
 }
 
+std::mutex& Metrics::GetStatMutex(const std::string &name)
+{
+    return stats_mutex_.at(name);
+}
+
 void Metrics::UpdateStats(const std::string& name, double value)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> read_lock(mutex_);
     auto it = stats_type_.find(name);
     if (it == stats_type_.end()) { return; }
+    std::mutex& stat_mutex = GetStatMutex(name);
+    std::lock_guard<std::mutex> lock(stat_mutex);
     switch (it->second)
     {
     case MetricType::COUNTER:
@@ -86,7 +94,7 @@ std::tuple<
         std::unordered_map<std::string, std::vector<double>>
     > Metrics::GetAllStatsAndClear()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> read_lock(mutex_);
     auto result = std::make_tuple(
         std::move(counter_stats_),
         std::move(gauge_stats_),
