@@ -43,7 +43,7 @@ public:
 
     ~Metrics() = default;
 
-    void CreateStats(const std::string& name, std::string& type);
+    void CreateStats(const std::string& name, const std::string& type);
 
     void UpdateStats(const std::string& name, double value);
 

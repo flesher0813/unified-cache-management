@@ -26,18 +26,19 @@
 
 namespace UC::Metrics {
 
-void Metrics::CreateStats(const std::string& name, std::string& type)
+void Metrics::CreateStats(const std::string& name, const std::string& type)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::transform(type.begin(), type.end(), type.begin(), ::toupper);
+    std::string type_upper = type;
+    std::transform(type_upper.begin(), type_upper.end(), type_upper.begin(), ::toupper);
     if (stats_type_.count(name)) {
         return;
     } else {
-        if (type == "COUNTER") {
+        if (type_upper == "COUNTER") {
             stats_type_[name] = MetricType::COUNTER;
-        } else if (type == "GAUGE") {
+        } else if (type_upper == "GAUGE") {
             stats_type_[name] = MetricType::GAUGE;
-        } else if (type == "HISTOGRAM") {
+        } else if (type_upper == "HISTOGRAM") {
             stats_type_[name] = MetricType::HISTOGRAM;
         } else {
             return;

@@ -26,7 +26,7 @@
 #include "metrics.h"
 
 namespace UC::Metrics {
-void CreateStats(const std::string& name, std::string& type);
+void CreateStats(const std::string& name, const std::string& type);
 
 void UpdateStats(const std::string& name, double value);
 
