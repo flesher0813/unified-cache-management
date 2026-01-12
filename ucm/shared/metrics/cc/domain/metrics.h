@@ -26,11 +26,14 @@
 
 #include <memory>
 #include <shared_mutex>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <tuple>
 #include <atomic>
+#include <list>
+#include <thread>
 
 namespace UC::Metrics {
 struct MetricBuffer
@@ -85,9 +88,9 @@ private:
 
     std::shared_mutex mutex_;
     std::unordered_map<std::string, MetricType> stats_type_;
-    std::list<std::pair<int, MetricBuffer*>> buffers_;
-    static thread_local MetricBuffer thread_buffer_;
-    static bool is_registered_thread_;
+    std::list<std::weak_ptr<MetricBuffer>> buffers_;
+    static thread_local std::shared_ptr<MetricBuffer> thread_buffer_;
+    static thread_local bool is_registered_thread_;
 
     Metrics() = default;
     Metrics(const Metrics&) = delete;
