@@ -31,9 +31,18 @@
 #include <vector>
 #include <tuple>
 #include <atomic>
+#include "concurrentqueue.h"
 
 namespace UC::Metrics {
 
+enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
+
+struct MetricTask
+{
+    MetricType op;
+    std::string name;
+    double value;
+};
 class Metrics {
 public:
     static Metrics& GetInstance()
@@ -60,7 +69,16 @@ public:
         }
     }
 
-    ~Metrics() = default;
+    ~Metrics()
+    {
+        stop_flag_.store(true, std::memory_order_relaxed);
+        queue_.cancel_wait();
+        for (auto& t : threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+    }
 
     void CreateStats(const std::string& name, const std::string& type);
 
@@ -75,15 +93,26 @@ public:
     > GetAllStatsAndClear();
 
 private:
-    enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
-
     std::mutex mutex_;
+    std::mutex counter_mutex_, gauge_mutex_, histogram_mutex_;
     std::unordered_map<std::string, double> counter_stats_;
     std::unordered_map<std::string, double> gauge_stats_;
     std::unordered_map<std::string, std::vector<double>> histogram_stats_;
     std::unordered_map<std::string, MetricType> stats_type_;
+    moodycamel::ConcurrentQueue<MetricTask> queue_;
+    std::vector<std::thread> threads_;
+    std::atomic<bool> stop_flag_{false};
 
-    Metrics() = default;
+    void WorkerLoop();
+    void ProcessNextTask();
+
+    Metrics()
+    {
+        int threads_n = 4;
+        for (size_t i = 0; i < threads_n; i++) {
+            threads_.emplace_back(&WorkerLoop, this);
+        }
+    }
     Metrics(const Metrics&) = delete;
     Metrics& operator=(const Metrics&) = delete;
     static std::atomic<bool> is_inited_;
