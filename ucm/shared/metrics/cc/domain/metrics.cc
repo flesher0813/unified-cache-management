@@ -37,7 +37,7 @@ void Metrics::CreateStats(const std::string& name, const std::string& type)
     if (stats_type_.count(name)) {
         return;
     } else {
-        stats_mutex_.emplace(name, std::mutex());
+        stats_mutex_[name] = std::make_shared<std::mutex>();
         if (type_upper == "COUNTER") {
             stats_type_[name] = MetricType::COUNTER;
         } else if (type_upper == "GAUGE") {
@@ -50,7 +50,7 @@ void Metrics::CreateStats(const std::string& name, const std::string& type)
     }
 }
 
-std::mutex& Metrics::GetStatMutex(const std::string &name)
+std::shared_ptr<std::mutex>& Metrics::GetStatMutex(const std::string &name)
 {
     return stats_mutex_.at(name);
 }
@@ -60,8 +60,8 @@ void Metrics::UpdateStats(const std::string& name, double value)
     std::shared_lock<std::shared_mutex> read_lock(mutex_);
     auto it = stats_type_.find(name);
     if (it == stats_type_.end()) { return; }
-    std::mutex& stat_mutex = GetStatMutex(name);
-    std::lock_guard<std::mutex> lock(stat_mutex);
+    std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
+    std::lock_guard<std::mutex> lock(*stat_mutex);
     switch (it->second)
     {
     case MetricType::COUNTER:

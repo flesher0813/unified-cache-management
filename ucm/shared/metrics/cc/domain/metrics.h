@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -82,14 +83,14 @@ private:
     std::unordered_map<std::string, double> gauge_stats_;
     std::unordered_map<std::string, std::vector<double>> histogram_stats_;
     std::unordered_map<std::string, MetricType> stats_type_;
-    std::unordered_map<std::string, std::mutex mutex_> stats_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<std::mutex>> stats_mutex_;
 
     Metrics() = default;
     Metrics(const Metrics&) = delete;
     Metrics& operator=(const Metrics&) = delete;
     static std::atomic<bool> is_inited_;
     static size_t max_vector_len_;
-    std::mutex& GetStatMutex(const std::string &name);
+    std::shared_ptr<std::mutex>& GetStatMutex(const std::string &name);
 };
 } // namespace UC::Metrics
 
