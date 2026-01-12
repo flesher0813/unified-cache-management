@@ -25,7 +25,7 @@
 #define UNIFIEDCACHE_METRICS_H
 
 #include <memory>
-#include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +33,12 @@
 #include <atomic>
 
 namespace UC::Metrics {
+struct MetricBuffer
+{
+    std::unordered_map<std::string, double> counter_stats_;
+    std::unordered_map<std::string, double> gauge_stats_;
+    std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+};
 
 class Metrics {
 public:
@@ -77,11 +83,11 @@ public:
 private:
     enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
 
-    std::mutex mutex_;
-    std::unordered_map<std::string, double> counter_stats_;
-    std::unordered_map<std::string, double> gauge_stats_;
-    std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+    std::shared_mutex mutex_;
     std::unordered_map<std::string, MetricType> stats_type_;
+    std::list<std::pair<int, MetricBuffer*>> buffers_;
+    static thread_local MetricBuffer thread_buffer_;
+    static bool is_registered_thread_;
 
     Metrics() = default;
     Metrics(const Metrics&) = delete;

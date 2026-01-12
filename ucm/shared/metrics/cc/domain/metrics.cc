@@ -31,7 +31,7 @@ size_t Metrics::max_vector_len_{10000};
 
 void Metrics::CreateStats(const std::string& name, const std::string& type)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     std::string type_upper = type;
     std::transform(type_upper.begin(), type_upper.end(), type_upper.begin(), ::toupper);
     if (stats_type_.count(name)) {
@@ -51,20 +51,29 @@ void Metrics::CreateStats(const std::string& name, const std::string& type)
 
 void Metrics::UpdateStats(const std::string& name, double value)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    if (!is_registered_thread_)
+    {
+        std::thread::id tid = std::this_thread::get_id();
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        buffers_.emplace_back(tid, &thread_buffer_);
+        is_registered_thread_ = true;
+    }
+
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = stats_type_.find(name);
     if (it == stats_type_.end()) { return; }
+
     switch (it->second)
     {
     case MetricType::COUNTER:
-        counter_stats_[name] += value;
+        thread_buffer_.counter_stats_[name] += value;
         break;
     case MetricType::GAUGE:
-        gauge_stats_[name] = value;
+        thread_buffer_.gauge_stats_[name] = value;
         break;
     case MetricType::HISTOGRAM:
         if (histogram_stats_[name].size() < max_vector_len_) {
-            histogram_stats_[name].push_back(value);
+            thread_buffer_.histogram_stats_[name].push_back(value);
         }
         break;
     
@@ -86,15 +95,37 @@ std::tuple<
         std::unordered_map<std::string, std::vector<double>>
     > Metrics::GetAllStatsAndClear()
 {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unordered_map<std::string, double> total_counter;
+    std::unordered_map<std::string, double> total_gauge;
+    std::unordered_map<std::string, std::vector<double>> total_histogram;
+
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    for(auto& [tid, buffer]: buffers_) {
+        for(auto& [name, value]: buffer->counter_stats_) {
+            total_counter[name] += value;
+        }
+        for(auto& [name, value]: buffer->gauge_stats_) {
+            total_gauge[name] = value;
+        }
+        for(auto& [name, value]: buffer->histogram_stats_) {
+            total_histogram[name].insert(
+                total_histogram[name].end(),
+                vals.begin(), vals.end()
+            );
+        }
+        buffer->counter_stats_.clear();
+        buffer->gauge_stats_.clear();
+        buffer->histogram_stats_.clear();
+    }
+    buffers_.remove_if([](const auto& entry) {
+        return !std::thread(entry.first).joinable();
+    });
     auto result = std::make_tuple(
-        std::move(counter_stats_),
-        std::move(gauge_stats_),
-        std::move(histogram_stats_)
+        std::move(total_counter),
+        std::move(total_gauge),
+        std::move(total_histogram)
     );
-    counter_stats_.clear();
-    gauge_stats_.clear();
-    histogram_stats_.clear();
+    
     return result;
 }
 
