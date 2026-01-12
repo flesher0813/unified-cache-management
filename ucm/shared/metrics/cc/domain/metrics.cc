@@ -32,35 +32,52 @@ void Metrics::WorkerLoop()
 {
     while(!stop_flag_.load(std::memory_order_relaxed)){
         ProcessNextTask();
+        // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    MetricTask remaining_task;
+    while (queue_.try_dequeue(remaining_task)) {
+        ProcessSingleTask(remaining_task);
+    }
+}
+
+void Metrics::ProcessSingleTask(const MetricTask& update_task)
+{
+    if (update_task.name.empty()) {
+        return;
+    }
+
+    switch (update_task.op)
+    {
+        case MetricType::COUNTER:
+            {
+                std::lock_guard<std::mutex> counter_lock(counter_mutex_);
+                counter_stats_[update_task.name] += update_task.value;
+                break;
+            }
+        case MetricType::GAUGE:
+            {
+                std::lock_guard<std::mutex> gauge_lock(gauge_mutex_);
+                gauge_stats_[update_task.name] = update_task.value;
+                break;
+            }
+        case MetricType::HISTOGRAM:
+            {
+                std::lock_guard<std::mutex> histogram_lock(histogram_mutex_);
+                histogram_stats_[update_task.name].push_back(update_task.value);
+                break;
+            }
+        
+        default:
+            break;
     }
 }
 
 void Metrics::ProcessNextTask()
 {
     MetricTask update_task;
-    if (queue_.wait_dequeue(update_task))
+    if (queue_.try_dequeue(update_task))
     {
-        if (stop_flag_.load(std::memory_order_relaxed)) {
-            return;
-        }
-        switch (update_task.op)
-        {
-        case MetricType::COUNTER:
-            std::lock_guard<std::mutex> counter_lock(counter_mutex_);
-            counter_stats_[update_task.name] += update_task.value;
-            break;
-        case MetricType::GAUGE:
-            std::lock_guard<std::mutex> gauge_lock(gauge_mutex_);
-            gauge_stats_[update_task.name] = update_task.value;
-            break;
-        case MetricType::HISTOGRAM:
-            std::lock_guard<std::mutex> histogram_lock(histogram_mutex_);
-            histogram_stats_[update_task.name].push_back(update_task.value);
-            break;
-        
-        default:
-            break;
-        }
+        ProcessSingleTask(update_task);
     }
 
 }

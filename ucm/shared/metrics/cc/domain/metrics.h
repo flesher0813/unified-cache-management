@@ -32,6 +32,7 @@
 #include <tuple>
 #include <atomic>
 #include "concurrentqueue.h"
+#include <iostream>
 
 namespace UC::Metrics {
 
@@ -72,7 +73,8 @@ public:
     ~Metrics()
     {
         stop_flag_.store(true, std::memory_order_relaxed);
-        queue_.cancel_wait();
+        size_t size = queue_.size_approx(); // wake up all worker threads
+        std::cout << "Metrics destructor, queue size: " << size << std::endl;
         for (auto& t : threads_) {
             if (t.joinable()) {
                 t.join();
@@ -105,12 +107,13 @@ private:
 
     void WorkerLoop();
     void ProcessNextTask();
+    void ProcessSingleTask(const MetricTask& task);
 
     Metrics()
     {
         int threads_n = 4;
-        for (size_t i = 0; i < threads_n; i++) {
-            threads_.emplace_back(&WorkerLoop, this);
+        for (int i = 0; i < threads_n; i++) {
+            threads_.emplace_back(&Metrics::WorkerLoop, this);
         }
     }
     Metrics(const Metrics&) = delete;
