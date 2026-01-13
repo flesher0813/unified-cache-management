@@ -44,7 +44,7 @@ protected:
     }
 };
 
-TEST_F(UCStatsMonitorUT, UpdateSingleStatAndGet)
+TEST_F(UCMetricsUT, UpdateSingleStatAndGet)
 {
     // Update stat
     UpdateStats("stats1", 1.0);
@@ -62,13 +62,13 @@ TEST_F(UCStatsMonitorUT, UpdateSingleStatAndGet)
     UpdateStats("stats2", 9.0);
     UpdateStats("stats3", 8.8);
 
-    auto stats = GetAllStatsAndClear();
-    const auto& counter_iter = std::get<0>(stats);
+    stats = GetAllStatsAndClear();
+    const auto& counter_iter1 = std::get<0>(stats);
     const auto& gauge_iter = std::get<1>(stats);
     const auto& histogram_iter = std::get<2>(stats);
 
-    ASSERT_NE(counter_iter.find("stats1"), counter_iter.end());
-    ASSERT_EQ(counter_iter.at("stats1"), 1.0);
+    ASSERT_NE(counter_iter1.find("stats1"), counter_iter1.end());
+    ASSERT_EQ(counter_iter1.at("stats1"), 1.0);
 
     ASSERT_NE(gauge_iter.find("stats2"), gauge_iter.end());
     ASSERT_EQ(gauge_iter.at("stats2"), 9.0);
@@ -78,7 +78,7 @@ TEST_F(UCStatsMonitorUT, UpdateSingleStatAndGet)
 }
 
 
-TEST_F(UCStatsMonitorUT, UpdateMultipleStatsAndGet)
+TEST_F(UCMetricsUT, UpdateMultipleStatsAndGet)
 {
     UpdateStats(
         {
