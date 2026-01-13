@@ -30,6 +30,7 @@
 #include <unordered_map>
 #include <vector>
 #include <tuple>
+#include <atomic>
 
 namespace UC::Metrics {
 
@@ -37,8 +38,26 @@ class Metrics {
 public:
     static Metrics& GetInstance()
     {
+        if (!is_inited_) {
+            throw std::runtime_error("Please call SetUp() first!");
+        }
         static Metrics inst;
         return inst;
+    }
+
+    static void SetUp(size_t maxVectorLen)
+    {
+        if (is_inited_.load(std::memory_order_acquire)) {
+            return;
+        }
+        bool expected = false;
+        if (!is_inited_.compare_exchange_strong(
+                expected,
+                true,
+                std::memory_order_release,
+                std::memory_order_relaxed)) {
+            max_vector_len_ = maxVectorLen;
+        }
     }
 
     ~Metrics() = default;
@@ -67,6 +86,8 @@ private:
     Metrics() = default;
     Metrics(const Metrics&) = delete;
     Metrics& operator=(const Metrics&) = delete;
+    static std::atomic<bool> is_inited_;
+    static size_t max_vector_len_;
 };
 } // namespace UC::Metrics
 

@@ -35,6 +35,7 @@ protected:
     void SetUp() override
     {
         try {
+            Metrics::SetUp(1000);
             CreateStats("stats1", "counter");
             CreateStats("stats2", "gauge");
             CreateStats("stats3", "histogram");

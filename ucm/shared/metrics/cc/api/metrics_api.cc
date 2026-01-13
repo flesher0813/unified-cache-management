@@ -24,7 +24,15 @@
 #include "metrics_api.h"
 namespace UC::Metrics {
 
-void CreateStats(const std::string& name, const std::string& type) { Metrics::GetInstance().CreateStats(name, type); }
+void SetUp(size_t maxVectorLen)
+{
+    Metrics::SetUp(maxVectorLen);
+}
+
+void CreateStats(const std::string& name, const std::string& type)
+{
+    Metrics::GetInstance().CreateStats(name, type);
+}
 
 void UpdateStats(const std::string& name, double value)
 {

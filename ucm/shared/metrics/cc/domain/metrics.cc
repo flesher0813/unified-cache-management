@@ -26,6 +26,9 @@
 
 namespace UC::Metrics {
 
+std::atomic<bool> Metrics::is_inited_{false};
+size_t Metrics::max_vector_len_{10000};
+
 void Metrics::CreateStats(const std::string& name, const std::string& type)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -60,7 +63,9 @@ void Metrics::UpdateStats(const std::string& name, double value)
         gauge_stats_[name] = value;
         break;
     case MetricType::HISTOGRAM:
-        histogram_stats_[name].push_back(value);
+        if (histogram_stats_[name].size() < max_vector_len_) {
+            histogram_stats_[name].push_back(value);
+        }
         break;
     
     default:

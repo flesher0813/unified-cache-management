@@ -26,6 +26,9 @@
 #include "metrics.h"
 
 namespace UC::Metrics {
+
+void SetUp(size_t maxVectorLen);
+
 void CreateStats(const std::string& name, const std::string& type);
 
 void UpdateStats(const std::string& name, double value);

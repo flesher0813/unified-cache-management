@@ -61,6 +61,7 @@ protected:
     void SetUp() override
     {
         try {
+            Metrics::SetUp(CALL_PER_THREAD);
             for (int i = 0; i < STATS_NUM; ++i) {
                 CreateStats("stats_counter_" + std::to_string(i), "counter");
                 CreateStats("stats_gauge_" + std::to_string(i), "gauge");
