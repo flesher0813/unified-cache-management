@@ -21,15 +21,15 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  * */
+#include <atomic>
+#include <chrono>
 #include <gtest/gtest.h>
+#include <iostream>
+#include <mutex>
+#include <random>
+#include <thread>
 #include <unistd.h>
 #include "metrics_api.h"
-#include <thread>
-#include <iostream>
-#include <chrono>
-#include <atomic>
-#include <random>
-#include <mutex>
 
 using namespace UC::Metrics;
 
@@ -53,7 +53,7 @@ protected:
     std::thread background_get_thread_;
     std::vector<std::thread> worker_threads_;
 
-    std::uniform_int_distribution<int> stat_idx_dist_; 
+    std::uniform_int_distribution<int> stat_idx_dist_;
     std::uniform_int_distribution<int> type_dist_;
     std::uniform_real_distribution<double> value_dist_;
     std::mutex stats_mutex_;
@@ -70,9 +70,9 @@ protected:
         } catch (const std::exception& e) {
             throw;
         }
-        stat_idx_dist_ = std::uniform_int_distribution<int>(0, STATS_NUM - 1); 
+        stat_idx_dist_ = std::uniform_int_distribution<int>(0, STATS_NUM - 1);
         type_dist_ = std::uniform_int_distribution<int>(0, 2);
-        value_dist_ =  std::uniform_real_distribution<double>(0.0, 100000.0);
+        value_dist_ = std::uniform_real_distribution<double>(0.0, 100000.0);
     }
 
     void TearDown() override
@@ -109,26 +109,20 @@ protected:
 
     void UpdateStatsLoop(int thread_id)
     {
-        std::mt19937 rng_; 
+        std::mt19937 rng_;
         rng_.seed(std::chrono::system_clock::now().time_since_epoch().count() + thread_id);
         int call_count = 0;
         std::chrono::high_resolution_clock::time_point start, end;
         double total_time_us = 0.0;
-        while (call_count < CALL_PER_THREAD && is_running_.load(std::memory_order_relaxed))  {
+        while (call_count < CALL_PER_THREAD && is_running_.load(std::memory_order_relaxed)) {
             int stat_idx = stat_idx_dist_(rng_);
             int type = type_dist_(rng_);
             double value = value_dist_(rng_);
             start = std::chrono::high_resolution_clock::now();
             switch (type) {
-                case 0:
-                    UpdateStats("stats_counter_" + std::to_string(stat_idx), value);
-                    break;
-                case 1:
-                    UpdateStats("stats_gauge_" + std::to_string(stat_idx), value);
-                    break;
-                case 2:
-                    UpdateStats("stats_histogram_" + std::to_string(stat_idx), value);
-                    break;
+                case 0: UpdateStats("stats_counter_" + std::to_string(stat_idx), value); break;
+                case 1: UpdateStats("stats_gauge_" + std::to_string(stat_idx), value); break;
+                case 2: UpdateStats("stats_histogram_" + std::to_string(stat_idx), value); break;
             }
             end = std::chrono::high_resolution_clock::now();
             total_time_us += std::chrono::duration<double, std::micro>(end - start).count();
@@ -137,9 +131,7 @@ protected:
         std::lock_guard<std::mutex> lock(stats_mutex_);
         result_.total_calls += call_count;
         result_.avg_time_us += total_time_us / call_count;
-
     }
-
 };
 
 TEST_P(UCMetricsPerfTest, Test)
@@ -150,7 +142,8 @@ TEST_P(UCMetricsPerfTest, Test)
     auto test_start = std::chrono::high_resolution_clock::now();
 
     // Start background get stats thread
-    background_get_thread_ = std::thread(&UCMetricsPerfTest::RunBackgroundTask, this, get_interval_ms);
+    background_get_thread_ =
+        std::thread(&UCMetricsPerfTest::RunBackgroundTask, this, get_interval_ms);
 
     // Start worker threads
     for (int i = 0; i < thread_count; ++i) {
@@ -170,18 +163,16 @@ TEST_P(UCMetricsPerfTest, Test)
     result_.avg_time_us /= thread_count;
     result_.total_time_s = std::chrono::duration<double>(test_end - test_start).count();
 
-    // 输出结果（和之前一致）
-    std::cout << "\n===== Test Results: thread num=" << thread_count << ", get interval=" << get_interval_ms << " =====" << std::endl;
+    // Print result
+    std::cout << "\n===== Test Results: thread num=" << thread_count
+              << ", get interval=" << get_interval_ms << " =====" << std::endl;
     std::cout << "UpdateStats Total Calls: " << result_.total_calls << std::endl;
     std::cout << "Backend GetStatsAndClear Calls: " << result_.total_get_calls << std::endl;
     std::cout << "Total Running Time: " << result_.total_time_s << " s" << std::endl;
     std::cout << "Avg UpdateStats Time: " << result_.avg_time_us << " us" << std::endl;
-    std::cout << "Avg GetAndClear Time: " <<  result_.avg_get_time_us << " us" << std::endl;
+    std::cout << "Avg GetAndClear Time: " << result_.avg_get_time_us << " us" << std::endl;
 }
 
-INSTANTIATE_TEST_CASE_P(MyPrimeParamTest,
-    UCMetricsPerfTest,
-    ::testing::Combine(
-        ::testing::Values(1, 200),
-        ::testing::Values(10, 50, 100)
-    ));
+INSTANTIATE_TEST_CASE_P(MyPrimeParamTest, UCMetricsPerfTest,
+                        ::testing::Combine(::testing::Values(1, 200),
+                                           ::testing::Values(10, 50, 100)));
