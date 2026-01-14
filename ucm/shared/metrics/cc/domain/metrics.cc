@@ -37,12 +37,12 @@ void Metrics::CreateStats(const std::string& name, const std::string& type)
     if (stats_type_.count(name)) {
         return;
     } else {
-        stats_mutex_[name] = std::make_shared<std::mutex>();
         if (type_upper == "COUNTER") {
             stats_type_[name] = MetricType::COUNTER;
         } else if (type_upper == "GAUGE") {
             stats_type_[name] = MetricType::GAUGE;
         } else if (type_upper == "HISTOGRAM") {
+            stats_mutex_[name] = std::make_shared<std::mutex>();
             stats_type_[name] = MetricType::HISTOGRAM;
         } else {
             return;
@@ -60,8 +60,6 @@ void Metrics::UpdateStats(const std::string& name, double value)
     std::shared_lock<std::shared_mutex> read_lock(mutex_);
     auto it = stats_type_.find(name);
     if (it == stats_type_.end()) { return; }
-    std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
-    std::lock_guard<std::mutex> lock(*stat_mutex);
     switch (it->second)
     {
     case MetricType::COUNTER:
@@ -72,6 +70,9 @@ void Metrics::UpdateStats(const std::string& name, double value)
         break;
     case MetricType::HISTOGRAM:
         if (histogram_stats_[name].size() < max_vector_len_) {
+        {
+            std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
+            std::lock_guard<std::mutex> lock(*stat_mutex);
             histogram_stats_[name].push_back(value);
         }
         break;
@@ -95,14 +96,20 @@ std::tuple<
     > Metrics::GetAllStatsAndClear()
 {
     std::unique_lock<std::shared_mutex> read_lock(mutex_);
+
+    std::unordered_map<std::string, double> counter_std;
+    std::unordered_map<std::string, double> gauge_std;
+    std::unordered_map<std::string, std::vector<double>> histogram_std;
+
+    counter_stats_.swap(counter_std);
+    gauge_stats_.swap(gauge_std);
+    histogram_stats_.swap(histogram_std);
+
     auto result = std::make_tuple(
-        std::move(counter_stats_),
-        std::move(gauge_stats_),
-        std::move(histogram_stats_)
+        std::move(counter_std),
+        std::move(gauge_std),
+        std::move(histogram_std)
     );
-    counter_stats_.clear();
-    gauge_stats_.clear();
-    histogram_stats_.clear();
     return result;
 }
 

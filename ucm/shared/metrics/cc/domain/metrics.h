@@ -28,7 +28,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
-#include <unordered_map>
+#include <tbb/concurrent_unordered_map.h>
 #include <vector>
 #include <tuple>
 #include <atomic>
@@ -79,9 +79,9 @@ private:
     enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
 
     std::shared_mutex mutex_;
-    std::unordered_map<std::string, double> counter_stats_;
-    std::unordered_map<std::string, double> gauge_stats_;
-    std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+    tbb::concurrent_unordered_map<std::string, double> counter_stats_;
+    tbb::concurrent_unordered_map<std::string, double> gauge_stats_;
+    tbb::concurrent_unordered_map<std::string, std::vector<double>> histogram_stats_;
     std::unordered_map<std::string, MetricType> stats_type_;
     std::unordered_map<std::string, std::shared_ptr<std::mutex>> stats_mutex_;
 
