@@ -27,6 +27,7 @@
 namespace UC::Metrics {
 thread_local std::shared_ptr<MetricBuffer> Metrics::thread_buffer_ = std::make_shared<MetricBuffer>();
 thread_local bool Metrics::is_registered_thread_ = false;
+thread_local Metrics::ThreadGuard Metrics::guard_ = Metrics::ThreadGuard(thread_buffer_);
 
 std::atomic<bool> Metrics::is_inited_{false};
 size_t Metrics::max_vector_len_{10000};
@@ -73,7 +74,7 @@ void Metrics::UpdateStats(const std::string& name, double value)
         thread_buffer_->gauge_stats_[name] = value;
         break;
     case MetricType::HISTOGRAM:
-        if (histogram_stats_[name].size() < max_vector_len_) {
+        if (thread_buffer_->histogram_stats_[name].size() < max_vector_len_) {
             thread_buffer_->histogram_stats_[name].push_back(value);
         }
         break;
@@ -97,21 +98,13 @@ std::tuple<
     > Metrics::GetAllStatsAndClear()
 {
 
-    std::vector<std::shared_ptr<MetricBuffer>> valid_buffers;
-    {
-        std::shared_lock<std::shared_mutex> read_lock(mutex_);
-        for (const auto& weak_buf : buffers_) {
-            if (auto buf = weak_buf.lock()) {
-                valid_buffers.push_back(std::move(buf));
-            }
-        }
-    }
+    std::unique_lock<std::shared_mutex> write_lock(mutex_);
 
     std::unordered_map<std::string, double> total_counter;
     std::unordered_map<std::string, double> total_gauge;
     std::unordered_map<std::string, std::vector<double>> total_histogram;
 
-    for (const auto& buf : valid_buffers) {
+    for (const auto& buf : buffers_) {
         for (const auto& [name, value] : buf->counter_stats_) {
             total_counter[name] += value;
         }
@@ -123,22 +116,14 @@ std::tuple<
         for (auto& [name, values] : buf->histogram_stats_) {
             total_histogram[name].insert(
                 total_histogram[name].end(),
-                std::make_move_iterator(values.begin()),
-                std::make_move_iterator(values.end())
+                values.begin(),
+                values.end()
             );
         }
-    }
-
-    {
-        std::unique_lock<std::shared_mutex> write_lock(mutex_);
-        for (const auto& buf : valid_buffers) {
-            buf->counter_stats_.clear();
-            buf->gauge_stats_.clear();
-            buf->histogram_stats_.clear();
-        }
-        buffers_.remove_if([](const std::weak_ptr<MetricBuffer>& weak_buf) {
-            return weak_buf.expired();
-        });
+        buf->is_data_fetched_.store(true, std::memory_order_relaxed);
+        buf->counter_stats_.clear();
+        buf->gauge_stats_.clear();
+        buf->histogram_stats_.clear();
     }
 
     auto result = std::make_tuple(
@@ -146,7 +131,16 @@ std::tuple<
         std::move(total_gauge),
         std::move(total_histogram)
     );
-    
+
+    buffers_.erase(
+        std::remove_if(buffers_.begin(), buffers_.end(),
+            [](const std::shared_ptr<MetricBuffer>& buf) {
+                if (!buf) return true;
+                return !buf->is_thread_alive_.load(std::memory_order_relaxed) 
+                        && buf->is_data_fetched_.load(std::memory_order_relaxed);
+            }),
+        buffers_.end()
+        );
     return result;
 }
 

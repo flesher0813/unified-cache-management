@@ -41,6 +41,9 @@ struct MetricBuffer
     std::unordered_map<std::string, double> counter_stats_;
     std::unordered_map<std::string, double> gauge_stats_;
     std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+
+    std::atomic<bool> is_thread_alive_{true};
+    std::atomic<bool> is_data_fetched_{false};
 };
 
 class Metrics {
@@ -84,13 +87,28 @@ public:
     > GetAllStatsAndClear();
 
 private:
+    class ThreadGuard {
+        private:
+            std::shared_ptr<MetricBuffer> buf_;
+        public:
+            explicit ThreadGuard(std::shared_ptr<MetricBuffer> buf) : buf_(std::move(buf)) {}
+            ~ThreadGuard() {
+                if (buf_) {
+                    buf_->is_thread_alive_.store(false, std::memory_order_relaxed);
+                }
+            }
+            ThreadGuard(const ThreadGuard&) = delete;
+            ThreadGuard& operator=(const ThreadGuard&) = delete;
+    };
+
     enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
 
     std::shared_mutex mutex_;
     std::unordered_map<std::string, MetricType> stats_type_;
-    std::list<std::weak_ptr<MetricBuffer>> buffers_;
+    std::list<std::shared_ptr<MetricBuffer>> buffers_;
     static thread_local std::shared_ptr<MetricBuffer> thread_buffer_;
     static thread_local bool is_registered_thread_;
+    static thread_local ThreadGuard guard_;
 
     Metrics() = default;
     Metrics(const Metrics&) = delete;
