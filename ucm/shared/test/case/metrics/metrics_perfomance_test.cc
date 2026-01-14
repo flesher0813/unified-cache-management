@@ -93,6 +93,8 @@ protected:
             ++call_count;
 
         }
+        auto stats = GetAllStatsAndClear();
+        ++call_count;
         std::lock_guard<std::mutex> lock(stats_mutex_);
         result_.total_get_calls += call_count;
     }

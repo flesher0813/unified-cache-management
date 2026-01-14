@@ -51,7 +51,7 @@ public:
             return;
         }
         bool expected = false;
-        if (!is_inited_.compare_exchange_strong(
+        if (is_inited_.compare_exchange_strong(
                 expected,
                 true,
                 std::memory_order_release,
@@ -91,4 +91,4 @@ private:
 };
 } // namespace UC::Metrics
 
-#endif // UNIFIEDCACHE_MONITOR_H
+#endif // UNIFIEDCACHE_METRICS_H
