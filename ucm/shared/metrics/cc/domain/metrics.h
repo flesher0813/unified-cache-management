@@ -26,6 +26,7 @@
 
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -33,6 +34,7 @@
 #include <atomic>
 #include "concurrentqueue.h"
 #include <iostream>
+#include <condition_variable>
 
 namespace UC::Metrics {
 
@@ -95,8 +97,8 @@ public:
     > GetAllStatsAndClear();
 
 private:
-    std::mutex mutex_;
-    std::mutex counter_mutex_, gauge_mutex_, histogram_mutex_;
+    std::shared_mutex mutex_;
+    std::mutex cv_mutex_;
     std::unordered_map<std::string, double> counter_stats_;
     std::unordered_map<std::string, double> gauge_stats_;
     std::unordered_map<std::string, std::vector<double>> histogram_stats_;
@@ -104,14 +106,17 @@ private:
     moodycamel::ConcurrentQueue<MetricTask> queue_;
     std::vector<std::thread> threads_;
     std::atomic<bool> stop_flag_{false};
+    std::atomic<bool> is_processing_task_{false};
+    std::condition_variable cv_;
 
     void WorkerLoop();
     void ProcessNextTask();
     void ProcessSingleTask(const MetricTask& task);
+    void Flush();
 
     Metrics()
     {
-        int threads_n = 4;
+        int threads_n = 1;
         for (int i = 0; i < threads_n; i++) {
             threads_.emplace_back(&Metrics::WorkerLoop, this);
         }
