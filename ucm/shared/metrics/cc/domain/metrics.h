@@ -38,9 +38,40 @@
 namespace UC::Metrics {
 struct MetricBuffer
 {
-    std::unordered_map<std::string, double> counter_stats_;
-    std::unordered_map<std::string, double> gauge_stats_;
-    std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+    struct InnerBuffer {
+        std::unordered_map<std::string, double> counter_stats_;
+        std::unordered_map<std::string, double> gauge_stats_;
+        std::unordered_map<std::string, std::vector<double>> histogram_stats_;
+
+        void Clear() {
+            counter_stats_.clear();
+            gauge_stats_.clear();
+            histogram_stats_.clear();
+        }
+
+        std::shared_mutex buffer_mutex_;
+    };
+
+    InnerBuffer inner_bufs_[2];
+    std::atomic<int> write_idx_{0};
+
+    int SwitchBuffer() {
+        int old_idx = write_idx_.load(std::memory_order_relaxed);
+        write_idx_.store(1 - old_idx, std::memory_order_release);
+        return old_idx;
+    }
+
+    InnerBuffer& GetWriteBuffer(int idx) {
+        return inner_bufs_[idx];
+    }
+
+    const InnerBuffer& GetReadBuffer(int idx) const {
+        return inner_bufs_[idx];
+    }
+
+    void ClearReadBuffer(int idx) {
+        inner_bufs_[idx].Clear();
+    }
 
     std::atomic<bool> is_thread_alive_{true};
     std::atomic<bool> is_data_fetched_{false};

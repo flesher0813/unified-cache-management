@@ -61,21 +61,24 @@ void Metrics::UpdateStats(const std::string& name, double value)
         is_registered_thread_ = true;
     }
 
-    std::shared_lock<std::shared_mutex> lock(mutex_);
     auto it = stats_type_.find(name);
     if (it == stats_type_.end()) { return; }
+
+    int write_idx_ = thread_buffer_->write_idx_.load(std::memory_order_acquire);
+    std::shared_lock<std::shared_mutex> lock(thread_buffer_->inner_bufs_[write_idx_].buffer_mutex_);
+    auto& write_buf = thread_buffer_->GetWriteBuffer(write_idx_);
 
     switch (it->second)
     {
     case MetricType::COUNTER:
-        thread_buffer_->counter_stats_[name] += value;
+        write_buf.counter_stats_[name] += value;
         break;
     case MetricType::GAUGE:
-        thread_buffer_->gauge_stats_[name] = value;
+        write_buf.gauge_stats_[name] = value;
         break;
     case MetricType::HISTOGRAM:
-        if (thread_buffer_->histogram_stats_[name].size() < max_vector_len_) {
-            thread_buffer_->histogram_stats_[name].push_back(value);
+        if (write_buf.histogram_stats_[name].size() < max_vector_len_) {
+            write_buf.histogram_stats_[name].push_back(value);
         }
         break;
     
@@ -97,23 +100,24 @@ std::tuple<
         std::unordered_map<std::string, std::vector<double>>
     > Metrics::GetAllStatsAndClear()
 {
-
-    std::unique_lock<std::shared_mutex> write_lock(mutex_);
-
     std::unordered_map<std::string, double> total_counter;
     std::unordered_map<std::string, double> total_gauge;
     std::unordered_map<std::string, std::vector<double>> total_histogram;
 
     for (const auto& buf : buffers_) {
-        for (const auto& [name, value] : buf->counter_stats_) {
+        int old_idx = buf->SwitchBuffer();
+        std::unique_lock<std::shared_mutex> lock(buf->inner_bufs_[old_idx].buffer_mutex_);
+        auto& read_buf = buf->GetReadBuffer(old_idx);
+        
+        for (const auto& [name, value] : read_buf.counter_stats_) {
             total_counter[name] += value;
         }
 
-        for (const auto& [name, value] : buf->gauge_stats_) {
+        for (const auto& [name, value] : read_buf.gauge_stats_) {
             total_gauge[name] = value;
         }
 
-        for (auto& [name, values] : buf->histogram_stats_) {
+        for (auto& [name, values] : read_buf.histogram_stats_) {
             total_histogram[name].insert(
                 total_histogram[name].end(),
                 values.begin(),
@@ -121,9 +125,7 @@ std::tuple<
             );
         }
         buf->is_data_fetched_.store(true, std::memory_order_relaxed);
-        buf->counter_stats_.clear();
-        buf->gauge_stats_.clear();
-        buf->histogram_stats_.clear();
+        buf->ClearReadBuffer(old_idx);
     }
 
     auto result = std::make_tuple(
