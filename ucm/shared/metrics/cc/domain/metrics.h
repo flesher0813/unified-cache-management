@@ -35,6 +35,15 @@
 
 namespace UC::Metrics {
 
+struct MetricBuffer
+{
+    tbb::concurrent_unordered_map<std::string, double> counter_stats_;
+    tbb::concurrent_unordered_map<std::string, double> gauge_stats_;
+    tbb::concurrent_unordered_map<std::string, std::vector<double>> histogram_stats_;
+
+    std::shared_mutex buffer_mutex_;
+};
+
 class Metrics {
 public:
     static Metrics& GetInstance()
@@ -79,13 +88,18 @@ private:
     enum class MetricType { COUNTER, GAUGE, HISTOGRAM };
 
     std::shared_mutex mutex_;
-    tbb::concurrent_unordered_map<std::string, double> counter_stats_;
-    tbb::concurrent_unordered_map<std::string, double> gauge_stats_;
-    tbb::concurrent_unordered_map<std::string, std::vector<double>> histogram_stats_;
+    std::shared_ptr<MetricBuffer> buffers[2];
+    std::atomic<int> write_index_{0};
     std::unordered_map<std::string, MetricType> stats_type_;
     std::unordered_map<std::string, std::shared_ptr<std::mutex>> stats_mutex_;
 
-    Metrics() = default;
+    Metrics()
+    {
+        buffers[0] = std::make_shared<MetricBuffer>();
+        buffers[1] = std::make_shared<MetricBuffer>();
+        write_index_.store(0);
+    }
+
     Metrics(const Metrics&) = delete;
     Metrics& operator=(const Metrics&) = delete;
     static std::atomic<bool> is_inited_;

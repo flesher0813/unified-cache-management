@@ -58,28 +58,36 @@ std::shared_ptr<std::mutex>& Metrics::GetStatMutex(const std::string &name)
 
 void Metrics::UpdateStats(const std::string& name, double value)
 {
-    std::shared_lock<std::shared_mutex> read_lock(mutex_);
-    auto it = stats_type_.find(name);
-    if (it == stats_type_.end()) { return; }
-    switch (it->second)
+    MetricType type;
     {
-    case MetricType::COUNTER:
-        counter_stats_[name] += value;
-        break;
-    case MetricType::GAUGE:
-        gauge_stats_[name] = value;
-        break;
-    case MetricType::HISTOGRAM:
-        if (histogram_stats_[name].size() < max_vector_len_)
-        {
-            std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
-            std::lock_guard<std::mutex> lock(*stat_mutex);
-            histogram_stats_[name].push_back(value);
-        }
-        break;
+        std::shared_lock<std::shared_mutex> read_lock(mutex_);
+        auto it = stats_type_.find(name);
+        if (it == stats_type_.end()) { return; }
+        type = it->second;
+    }
     
-    default:
-        break;
+    int write_index = write_index_.load(std::memory_order_acquire);
+    std::shared_ptr<MetricBuffer>& current_buffer = buffers[write_index];
+    std::shared_lock<std::shared_mutex> read_lock(current_buffer->buffer_mutex_);
+    
+    switch (type)
+    {
+        case MetricType::COUNTER:
+            current_buffer->counter_stats_[name] += value;
+            break;
+        case MetricType::GAUGE:
+            current_buffer->gauge_stats_[name] = value;
+            break;
+        case MetricType::HISTOGRAM:
+            if (current_buffer->histogram_stats_[name].size() < max_vector_len_) {
+                std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
+                std::lock_guard<std::mutex> lock(*stat_mutex);
+                current_buffer->histogram_stats_[name].push_back(value);
+            }
+            break;
+        
+        default:
+            break;
     }
 }
 
@@ -96,22 +104,31 @@ std::tuple<
         std::unordered_map<std::string, std::vector<double>>
     > Metrics::GetAllStatsAndClear()
 {
-    std::unique_lock<std::shared_mutex> read_lock(mutex_);
+    int old_write_idx = write_index_.load(std::memory_order_acquire);
+    int new_write_idx = 1 - old_write_idx;
+    write_index_.store(new_write_idx, std::memory_order_release);
+
+    std::shared_ptr<MetricBuffer>& current_buffer = buffers[old_write_idx];
+    std::unique_lock<std::shared_mutex> old_buffer_lock(current_buffer->buffer_mutex_);
 
     std::unordered_map<std::string, double> counter_std;
     std::unordered_map<std::string, double> gauge_std;
     std::unordered_map<std::string, std::vector<double>> histogram_std;
 
-    for (auto&& item : counter_stats_) {
-        counter_std.insert(std::move(item));
+    counter_std.reserve(current_buffer->counter_stats_.size());
+    gauge_std.reserve(current_buffer->gauge_stats_.size());
+    histogram_std.reserve(current_buffer->histogram_stats_.size());
+
+    for (const auto& item : current_buffer->counter_stats_) {
+        counter_std[item.first] = item.second;
     }
 
-    for (auto&& item : gauge_stats_) {
-        gauge_std.insert(std::move(item));
+    for (const auto& item : current_buffer->gauge_stats_) {
+        gauge_std[item.first] = item.second;
     }
 
-    for (auto&& item : histogram_stats_) {
-        histogram_std.insert(std::move(item));
+    for (const auto& item : current_buffer->histogram_stats_) {
+        histogram_std[item.first] = std::move(const_cast<std::vector<double>&>(item.second));
     }
 
     auto result = std::make_tuple(
@@ -120,9 +137,9 @@ std::tuple<
         std::move(histogram_std)
     );
 
-    counter_stats_.clear();
-    gauge_stats_.clear();
-    histogram_stats_.clear();
+    current_buffer->counter_stats_.clear();
+    current_buffer->gauge_stats_.clear();
+    current_buffer->histogram_stats_.clear();
     
     return result;
 }
