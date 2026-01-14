@@ -23,6 +23,7 @@
  * */
 #include <algorithm>
 #include "metrics.h"
+#include <iostream>
 
 namespace UC::Metrics {
 
@@ -69,7 +70,7 @@ void Metrics::UpdateStats(const std::string& name, double value)
         gauge_stats_[name] = value;
         break;
     case MetricType::HISTOGRAM:
-        if (histogram_stats_[name].size() < max_vector_len_) {
+        if (histogram_stats_[name].size() < max_vector_len_)
         {
             std::shared_ptr<std::mutex>& stat_mutex = GetStatMutex(name);
             std::lock_guard<std::mutex> lock(*stat_mutex);
@@ -101,15 +102,28 @@ std::tuple<
     std::unordered_map<std::string, double> gauge_std;
     std::unordered_map<std::string, std::vector<double>> histogram_std;
 
-    counter_stats_.swap(counter_std);
-    gauge_stats_.swap(gauge_std);
-    histogram_stats_.swap(histogram_std);
+    for (auto&& item : counter_stats_) {
+        counter_std.insert(std::move(item));
+    }
+
+    for (auto&& item : gauge_stats_) {
+        gauge_std.insert(std::move(item));
+    }
+
+    for (auto&& item : histogram_stats_) {
+        histogram_std.insert(std::move(item));
+    }
 
     auto result = std::make_tuple(
         std::move(counter_std),
         std::move(gauge_std),
         std::move(histogram_std)
     );
+
+    counter_stats_.clear();
+    gauge_stats_.clear();
+    histogram_stats_.clear();
+    
     return result;
 }
 
