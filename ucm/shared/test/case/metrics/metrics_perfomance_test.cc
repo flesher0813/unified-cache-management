@@ -33,13 +33,14 @@
 
 using namespace UC::Metrics;
 
-class UCMetricsPerfTest : public ::testing::TestWithParam<int> {
+class UCMetricsPerfTest : public ::testing::TestWithParam<std::tuple<int, int>> {
 public:
-    void RunBackgroundTask() { BackgroundGetStatsTask(); }
+    void RunBackgroundTask(int get_interval_ms) { BackgroundGetStatsTask(get_interval_ms); }
     void RunWorkerTask(int thread_id) { UpdateStatsLoop(thread_id); }
 
     struct Result {
         double avg_time_us = 0.0;
+        double avg_get_time_us = 0.0;
         uint64_t total_calls = 0;
         uint64_t total_get_calls = 0;
         double total_time_s = 0.0;
@@ -47,7 +48,6 @@ public:
 
 protected:
     const int STATS_NUM = 1024;
-    const int GET_INTEERVAL_MS = 10;
     const int CALL_PER_THREAD = 1000000;
     std::atomic<bool> is_running_{false};
     std::thread background_get_thread_;
@@ -84,19 +84,27 @@ protected:
         }
     }
 
-    void BackgroundGetStatsTask()
+    void BackgroundGetStatsTask(int get_interval_ms)
     {
         int call_count = 0;
+        double total_time_us = 0.0;
+        std::chrono::high_resolution_clock::time_point start, end;
         while (is_running_.load(std::memory_order_relaxed)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(GET_INTEERVAL_MS));
+            std::this_thread::sleep_for(std::chrono::milliseconds(get_interval_ms));
+            start = std::chrono::high_resolution_clock::now();
             auto stats = GetAllStatsAndClear();
+            end = std::chrono::high_resolution_clock::now();
             ++call_count;
-
+            total_time_us += std::chrono::duration<double, std::micro>(end - start).count();
         }
+        start = std::chrono::high_resolution_clock::now();
         auto stats = GetAllStatsAndClear();
+        end = std::chrono::high_resolution_clock::now();
+        total_time_us += std::chrono::duration<double, std::micro>(end - start).count();
         ++call_count;
         std::lock_guard<std::mutex> lock(stats_mutex_);
         result_.total_get_calls += call_count;
+        result_.avg_get_time_us += total_time_us / call_count;
     }
 
     void UpdateStatsLoop(int thread_id)
@@ -136,12 +144,13 @@ protected:
 
 TEST_P(UCMetricsPerfTest, Test)
 {
-    int thread_count = GetParam();
+    int thread_count = std::get<0>(GetParam());
+    int get_interval_ms = std::get<1>(GetParam());
     is_running_.store(true, std::memory_order_relaxed);
     auto test_start = std::chrono::high_resolution_clock::now();
 
     // Start background get stats thread
-    background_get_thread_ = std::thread(&UCMetricsPerfTest::RunBackgroundTask, this);
+    background_get_thread_ = std::thread(&UCMetricsPerfTest::RunBackgroundTask, this, get_interval_ms);
 
     // Start worker threads
     for (int i = 0; i < thread_count; ++i) {
@@ -162,13 +171,17 @@ TEST_P(UCMetricsPerfTest, Test)
     result_.total_time_s = std::chrono::duration<double>(test_end - test_start).count();
 
     // 输出结果（和之前一致）
-    std::cout << "\n===== 测试结果：线程数=" << thread_count << " =====" << std::endl;
-    std::cout << "总调用次数：" << result_.total_calls << std::endl;
-    std::cout << "后台Get次数：" << result_.total_get_calls << std::endl;
-    std::cout << "总耗时：" << result_.total_time_s << " 秒" << std::endl;
-    std::cout << "单次调用平均耗时：" << result_.avg_time_us << " 微秒" << std::endl;
+    std::cout << "\n===== Test Results: thread num=" << thread_count << ", get interval=" << get_interval_ms << " =====" << std::endl;
+    std::cout << "UpdateStats Total Calls: " << result_.total_calls << std::endl;
+    std::cout << "Backend GetStatsAndClear Calls: " << result_.total_get_calls << std::endl;
+    std::cout << "Total Running Time: " << result_.total_time_s << " s" << std::endl;
+    std::cout << "Avg UpdateStats Time: " << result_.avg_time_us << " us" << std::endl;
+    std::cout << "Avg GetAndClear Time: " <<  result_.avg_get_time_us << " us" << std::endl;
 }
 
 INSTANTIATE_TEST_CASE_P(MyPrimeParamTest,
     UCMetricsPerfTest,
-    ::testing::Values(1, 200));
+    ::testing::Combine(
+        ::testing::Values(1, 200),
+        ::testing::Values(10, 50, 100)
+    ));
