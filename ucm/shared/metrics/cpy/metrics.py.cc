@@ -30,6 +30,7 @@ namespace UC::Metrics {
 
 void bind_monitor(py::module_& m)
 {
+    m.def("set_up", &SetUp);
     m.def("create_stats", &CreateStats);
     m.def("update_stats", py::overload_cast<const std::string&, double>(&UpdateStats));
     m.def("update_stats", py::overload_cast<const std::unordered_map<std::string, double>&>(&UpdateStats));

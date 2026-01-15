@@ -40,6 +40,7 @@ def test_wrap(func):
 
 @test_wrap
 def metrics_with_update_stats():
+    ucmmetrics.set_up(100)
     ucmmetrics.create_stats("counter_1", "counter")
     ucmmetrics.update_stats("counter_1", 1.2)
 
