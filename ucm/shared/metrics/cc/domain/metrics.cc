@@ -27,7 +27,6 @@
 namespace UC::Metrics {
 thread_local std::shared_ptr<MetricBuffer> Metrics::thread_buffer_ = std::make_shared<MetricBuffer>();
 thread_local bool Metrics::is_registered_thread_ = false;
-thread_local Metrics::ThreadGuard Metrics::guard_ = Metrics::ThreadGuard(thread_buffer_);
 
 std::atomic<bool> Metrics::is_inited_{false};
 size_t Metrics::max_vector_len_{10000};
@@ -124,7 +123,6 @@ std::tuple<
                 values.end()
             );
         }
-        buf->is_data_fetched_.store(true, std::memory_order_relaxed);
         buf->ClearReadBuffer(old_idx);
     }
 
@@ -134,15 +132,6 @@ std::tuple<
         std::move(total_histogram)
     );
 
-    buffers_.erase(
-        std::remove_if(buffers_.begin(), buffers_.end(),
-            [](const std::shared_ptr<MetricBuffer>& buf) {
-                if (!buf) return true;
-                return !buf->is_thread_alive_.load(std::memory_order_relaxed) 
-                        && buf->is_data_fetched_.load(std::memory_order_relaxed);
-            }),
-        buffers_.end()
-        );
     return result;
 }
 
