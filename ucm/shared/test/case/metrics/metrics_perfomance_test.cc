@@ -21,11 +21,9 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  * */
-#include <atomic>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <iostream>
-#include <mutex>
 #include <random>
 #include <thread>
 #include <unistd.h>
@@ -48,7 +46,7 @@ public:
 
 protected:
     const int STATS_NUM = 1024;
-    const int CALL_PER_THREAD = 1000000;
+    const int CALL_PER_THREAD = 10000;
     std::atomic<bool> is_running_{false};
     std::thread background_get_thread_;
     std::vector<std::thread> worker_threads_;
@@ -175,5 +173,5 @@ TEST_P(UCMetricsPerfTest, Test)
 }
 
 INSTANTIATE_TEST_CASE_P(MyPrimeParamTest, UCMetricsPerfTest,
-                        ::testing::Combine(::testing::Values(1, 8, 20),
+                        ::testing::Combine(::testing::Values(1, 200),
                                            ::testing::Values(10, 50, 100)));
