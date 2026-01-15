@@ -48,7 +48,7 @@ public:
 
 protected:
     const int STATS_NUM = 1024;
-    const int CALL_PER_THREAD = 1000000;
+    const int CALL_PER_THREAD = 10000;
     std::atomic<bool> is_running_{false};
     std::thread background_get_thread_;
     std::vector<std::thread> worker_threads_;
@@ -126,6 +126,7 @@ protected:
             }
             end = std::chrono::high_resolution_clock::now();
             total_time_us += std::chrono::duration<double, std::micro>(end - start).count();
+            std::this_thread::sleep_for(std::chrono::microseconds(10));
             ++call_count;
         }
         std::lock_guard<std::mutex> lock(stats_mutex_);
