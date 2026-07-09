@@ -8,4 +8,11 @@ if(BUILD_UNIT_TESTS)
         gtest_main gtest
     )
     gtest_discover_tests(ucmshared.test)
+
+    if(UCM_RUNTIME_ASCEND_FAMILY)
+        add_executable(ascend_register_limit_test
+            example/trans/ascend_register_limit_test.cc
+        )
+        target_link_libraries(ascend_register_limit_test PRIVATE trans)
+    endif()
 endif()
