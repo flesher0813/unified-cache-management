@@ -186,7 +186,14 @@ void* MMapWithAdvice(size_t& size)
 void TouchFull(void* ptr, size_t size)
 {
     const auto start = NowSec();
-    std::memset(ptr, 0, size);
+    auto* base = static_cast<std::byte*>(ptr);
+    constexpr size_t step = GiB;
+    for (size_t offset = 0; offset < size; offset += step) {
+        const auto len = std::min(step, size - offset);
+        std::memset(base + offset, 0, len);
+        std::cout << "touch progress " << offset + len << "/" << size << " ("
+                  << GiBString(offset + len) << "/" << GiBString(size) << " GiB)\n";
+    }
     std::cout << "touch full done size=" << size << " (" << GiBString(size)
               << " GiB) elapsed=" << NowSec() - start << "s\n";
 }
@@ -204,11 +211,14 @@ void MaybeMlock(void* ptr, size_t size)
 bool RegisterRange(const char* tag, void* ptr, size_t size)
 {
     errno = 0;
+    std::cout << tag << " register begin ptr=" << ptr << " size=" << size << " ("
+              << GiBString(size) << " GiB)\n";
     const auto start = NowSec();
     auto status = UC::Trans::Buffer::RegisterHostBuffer(ptr, size);
+    auto eno = errno;
     std::cout << tag << " register ptr=" << ptr << " size=" << size << " ("
               << GiBString(size) << " GiB) status=" << status.ToString()
-              << " elapsed=" << NowSec() - start << "s\n";
+              << " errno=" << eno << " elapsed=" << NowSec() - start << "s\n";
     return status.Success();
 }
 
@@ -251,6 +261,9 @@ void RunChunked(void* ptr, size_t totalSize, size_t chunkSize)
 
 int main(int argc, char** argv)
 {
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
+
     Config config;
     if (!ParseArgs(argc, argv, config)) {
         Usage(argv[0]);
