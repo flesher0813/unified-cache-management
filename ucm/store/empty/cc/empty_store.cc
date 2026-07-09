@@ -29,6 +29,7 @@
 #include <string>
 #include <sys/mman.h>
 #include "trans/buffer.h"
+#include "trans/device.h"
 #include "ucmstore_v1.h"
 
 namespace UC::EmptyStore {
@@ -61,6 +62,10 @@ public:
             return Status::InvalidParam("invalid cache_buffer_capacity_gb");
         }
 
+        Trans::Device device;
+        auto s = device.Setup(static_cast<int32_t>(deviceId));
+        if (s.Failure()) { return s; }
+
         mmapSize_ = AlignUp(totalGb * GiB, HugePageSize);
         mmapBuffer_ = mmap(nullptr, mmapSize_, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -90,7 +95,7 @@ public:
 
         std::cout << "EmptyStore mmap probe register begin ptr=" << mmapBuffer_
                   << " size=" << mmapSize_ << std::endl;
-        auto s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
+        s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
         std::cout << "EmptyStore mmap probe register status=" << s.ToString()
                   << " ptr=" << mmapBuffer_ << " size=" << mmapSize_ << std::endl;
         if (s.Failure()) { return s; }
