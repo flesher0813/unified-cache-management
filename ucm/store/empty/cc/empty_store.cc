@@ -28,6 +28,7 @@
 #include <iostream>
 #include <string>
 #include <sys/mman.h>
+#include "trans/buffer.h"
 #include "ucmstore_v1.h"
 
 namespace UC::EmptyStore {
@@ -38,6 +39,7 @@ class EmptyStore : public StoreV1 {
 public:
     ~EmptyStore() override
     {
+        if (registeredHostBuffer_) { Trans::Buffer::UnregisterHostBuffer(mmapBuffer_); }
         if (mmapBuffer_ == MAP_FAILED) { return; }
         (void)munlock(mmapBuffer_, mmapSize_);
         (void)munmap(mmapBuffer_, mmapSize_);
@@ -70,6 +72,9 @@ public:
         auto ret = madvise(mmapBuffer_, mmapSize_, MADV_HUGEPAGE);
         std::cout << "EmptyStore mmap probe madvise ret=" << ret << " errno="
                   << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+        if (ret != 0) {
+            return Status::OsApiError("empty madvise failed errno " + std::to_string(errno));
+        }
 
         std::cout << "EmptyStore mmap probe touch once begin size=" << mmapSize_ << std::endl;
         std::memset(mmapBuffer_, 0, mmapSize_);
@@ -79,6 +84,17 @@ public:
         ret = mlock(mmapBuffer_, mmapSize_);
         std::cout << "EmptyStore mmap probe mlock ret=" << ret << " errno="
                   << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+        if (ret != 0) {
+            return Status::OsApiError("empty mlock failed errno " + std::to_string(errno));
+        }
+
+        std::cout << "EmptyStore mmap probe register begin ptr=" << mmapBuffer_
+                  << " size=" << mmapSize_ << std::endl;
+        auto s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
+        std::cout << "EmptyStore mmap probe register status=" << s.ToString()
+                  << " ptr=" << mmapBuffer_ << " size=" << mmapSize_ << std::endl;
+        if (s.Failure()) { return s; }
+        registeredHostBuffer_ = true;
         return Status::OK();
     }
     std::string Readme() const { return "EmptyStore"; }
@@ -100,6 +116,7 @@ private:
     static constexpr size_t HugePageSize = 2 * MiB;
     void* mmapBuffer_{MAP_FAILED};
     size_t mmapSize_{0};
+    bool registeredHostBuffer_{false};
 
     static size_t AlignUp(size_t size, size_t alignment)
     {
