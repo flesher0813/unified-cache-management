@@ -22,6 +22,12 @@
  * SOFTWARE.
  * */
 #include <atomic>
+#include <cerrno>
+#include <cstdint>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <sys/mman.h>
 #include "ucmstore_v1.h"
 
 namespace UC::EmptyStore {
@@ -30,7 +36,51 @@ std::vector<uint8_t> OnLookup(size_t num) { return std::vector<uint8_t>(num, fal
 
 class EmptyStore : public StoreV1 {
 public:
-    Status Setup(const Detail::Dictionary& config) { return Status::OK(); }
+    ~EmptyStore() override
+    {
+        if (mmapBuffer_ == MAP_FAILED) { return; }
+        (void)munlock(mmapBuffer_, mmapSize_);
+        (void)munmap(mmapBuffer_, mmapSize_);
+    }
+    Status Setup(const Detail::Dictionary& config)
+    {
+        size_t totalGb = 0;
+        config.GetNumber("cache_buffer_capacity_gb", totalGb);
+        if (totalGb == 0) { return Status::OK(); }
+
+        int64_t deviceId = -1;
+        config.GetNumber("device_id", deviceId);
+        if (deviceId < 0) {
+            std::cout << "EmptyStore skip mmap allocation on non-worker device(" << deviceId
+                      << ")." << std::endl;
+            return Status::OK();
+        }
+        if (totalGb > SIZE_MAX / GiB) {
+            return Status::InvalidParam("invalid cache_buffer_capacity_gb");
+        }
+
+        mmapSize_ = AlignUp(totalGb * GiB, HugePageSize);
+        mmapBuffer_ = mmap(nullptr, mmapSize_, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mmapBuffer_ == MAP_FAILED) {
+            return Status::OsApiError("empty mmap failed errno " + std::to_string(errno));
+        }
+
+        errno = 0;
+        auto ret = madvise(mmapBuffer_, mmapSize_, MADV_HUGEPAGE);
+        std::cout << "EmptyStore mmap probe madvise ret=" << ret << " errno="
+                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+
+        std::cout << "EmptyStore mmap probe touch once begin size=" << mmapSize_ << std::endl;
+        std::memset(mmapBuffer_, 0, mmapSize_);
+        std::cout << "EmptyStore mmap probe touch once done size=" << mmapSize_ << std::endl;
+
+        errno = 0;
+        ret = mlock(mmapBuffer_, mmapSize_);
+        std::cout << "EmptyStore mmap probe mlock ret=" << ret << " errno="
+                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+        return Status::OK();
+    }
     std::string Readme() const { return "EmptyStore"; }
     Expected<std::vector<uint8_t>> Lookup(const Detail::BlockId* blocks, size_t num)
     {
@@ -44,6 +94,17 @@ public:
     Status Wait(Detail::TaskHandle taskId) { return Status::OK(); }
 
 private:
+    static constexpr size_t KiB = 1024ULL;
+    static constexpr size_t MiB = KiB * KiB;
+    static constexpr size_t GiB = KiB * MiB;
+    static constexpr size_t HugePageSize = 2 * MiB;
+    void* mmapBuffer_{MAP_FAILED};
+    size_t mmapSize_{0};
+
+    static size_t AlignUp(size_t size, size_t alignment)
+    {
+        return (size + alignment - 1) / alignment * alignment;
+    }
     static Detail::TaskHandle NextId() noexcept
     {
         static std::atomic<Detail::TaskHandle> id{1};
