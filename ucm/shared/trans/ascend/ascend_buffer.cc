@@ -23,6 +23,7 @@
  * */
 #include "ascend_buffer.h"
 #include <acl/acl.h>
+#include <cstdint>
 #include <sys/mman.h>
 #include "logger/logger.h"
 
@@ -126,11 +127,21 @@ std::shared_ptr<void> Trans::AscendBuffer::MakeHostBuffer(size_t size)
 
 std::shared_ptr<void> Trans::AscendBuffer::MakeHostBuffer4DirectIo(size_t size)
 {
-    try {
-        return HostHugePages::Create(size)->Data();
-    } catch (...) {
+    constexpr size_t alignment = 4096;
+    const auto allocSize = size + alignment - 1;
+    if (allocSize < size) [[unlikely]] { return nullptr; }
+
+    void* raw = nullptr;
+    auto ret = aclrtMallocHost(&raw, allocSize);
+    if (ret != ACL_SUCCESS) [[unlikely]] {
+        UC_ERROR("Failed({}) to make aligned host buffer({}).", ret, allocSize);
         return nullptr;
     }
+
+    auto addr = reinterpret_cast<uintptr_t>(raw);
+    auto alignedAddr = (addr + alignment - 1) & ~(alignment - 1);
+    auto* aligned = reinterpret_cast<void*>(alignedAddr);
+    return std::shared_ptr<void>(aligned, [raw](void*) { aclrtFreeHost(raw); });
 }
 
 Status Buffer::RegisterHostBuffer(void* host, size_t size, void** pDevice)
