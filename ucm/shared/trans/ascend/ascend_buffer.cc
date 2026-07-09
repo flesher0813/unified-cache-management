@@ -23,11 +23,95 @@
  * */
 #include "ascend_buffer.h"
 #include <acl/acl.h>
+#include <algorithm>
+#include <cerrno>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <fcntl.h>
+#include <string>
+#include <string_view>
 #include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "logger/logger.h"
 
 namespace UC::Trans {
+
+namespace {
+
+constexpr size_t kDirectIoAlignment = 4096;
+
+bool IsAclrtHostDirectIoDebugEnabled()
+{
+    const char* env = std::getenv("UCM_DEBUG_ACLRT_HOST_DIRECT_IO");
+    return env != nullptr && std::string_view(env) == "1";
+}
+
+std::string AclrtHostDirectIoDebugDir()
+{
+    const char* env = std::getenv("UCM_DEBUG_ACLRT_HOST_DIRECT_IO_DIR");
+    if (env != nullptr && env[0] != '\0') { return env; }
+    return "/tmp";
+}
+
+void TestHostBufferWrite(const char* tag, const char* path, int flags, const void* buffer,
+                         size_t size)
+{
+    int fd = open(path, flags, S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        UC_ERROR("Host buffer {} open({}) failed errno({}).", tag, path, errno);
+        return;
+    }
+
+    errno = 0;
+    auto nBytes = pwrite(fd, buffer, size, 0);
+    auto eno = errno;
+    UC_INFO("Host buffer {} pwrite path({}) buffer({}) size({}) nbytes({}) errno({}) "
+            "align(buffer/size)=({}/{}).",
+            tag, path, buffer, size, nBytes, eno,
+            reinterpret_cast<uintptr_t>(buffer) % kDirectIoAlignment, size % kDirectIoAlignment);
+    close(fd);
+}
+
+void DebugAclrtHostBufferDirectIo(void* raw, void* aligned, size_t size, size_t allocSize)
+{
+    const auto rawAddr = reinterpret_cast<uintptr_t>(raw);
+    const auto alignedAddr = reinterpret_cast<uintptr_t>(aligned);
+    const auto inRange = alignedAddr >= rawAddr && alignedAddr + size <= rawAddr + allocSize;
+    UC_INFO("Aclrt host buffer raw({}) aligned({}) size({}) allocSize({}) delta({}) "
+            "inRange({}) align(raw/aligned)=({}/{}).",
+            raw, aligned, size, allocSize, alignedAddr - rawAddr, inRange,
+            rawAddr % kDirectIoAlignment, alignedAddr % kDirectIoAlignment);
+
+    if (!IsAclrtHostDirectIoDebugEnabled()) { return; }
+
+    auto testSize = std::min<size_t>(size, 256 * 1024);
+    testSize = testSize / kDirectIoAlignment * kDirectIoAlignment;
+    if (testSize == 0) {
+        UC_WARN("Skip aclrt host direct-io debug for too small buffer({}).", size);
+        return;
+    }
+
+    std::memset(raw, 0x33, testSize);
+    std::memset(aligned, 0x55, testSize);
+    auto basePath = AclrtHostDirectIoDebugDir() + "/ucm_aclrt_host_direct_io_" +
+                    std::to_string(getpid()) + "_" + std::to_string(alignedAddr);
+    auto bufferedPath = basePath + "_buffered.bin";
+    auto directPath = basePath + "_direct.bin";
+    const int bufferedFlags = O_CREAT | O_TRUNC | O_WRONLY;
+    const int directFlags = O_CREAT | O_TRUNC | O_WRONLY | O_DIRECT;
+
+    TestHostBufferWrite("raw-buffered", bufferedPath.c_str(), bufferedFlags, raw, testSize);
+    TestHostBufferWrite("aligned-buffered", bufferedPath.c_str(), bufferedFlags, aligned,
+                        testSize);
+    TestHostBufferWrite("raw-direct", directPath.c_str(), directFlags, raw, testSize);
+    TestHostBufferWrite("aligned-direct", directPath.c_str(), directFlags, aligned, testSize);
+    unlink(bufferedPath.c_str());
+    unlink(directPath.c_str());
+}
+
+}  // namespace
 
 class HostHugePages : public std::enable_shared_from_this<HostHugePages> {
     struct ConstructorKey {};
@@ -127,7 +211,7 @@ std::shared_ptr<void> Trans::AscendBuffer::MakeHostBuffer(size_t size)
 
 std::shared_ptr<void> Trans::AscendBuffer::MakeHostBuffer4DirectIo(size_t size)
 {
-    constexpr size_t alignment = 4096;
+    constexpr size_t alignment = kDirectIoAlignment;
     const auto allocSize = size + alignment - 1;
     if (allocSize < size) [[unlikely]] { return nullptr; }
 
@@ -141,6 +225,7 @@ std::shared_ptr<void> Trans::AscendBuffer::MakeHostBuffer4DirectIo(size_t size)
     auto addr = reinterpret_cast<uintptr_t>(raw);
     auto alignedAddr = (addr + alignment - 1) & ~(alignment - 1);
     auto* aligned = reinterpret_cast<void*>(alignedAddr);
+    DebugAclrtHostBufferDirectIo(raw, aligned, size, allocSize);
     return std::shared_ptr<void>(aligned, [raw](void*) { aclrtFreeHost(raw); });
 }
 
