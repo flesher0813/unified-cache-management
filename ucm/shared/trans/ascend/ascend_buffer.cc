@@ -24,10 +24,58 @@
 #include "ascend_buffer.h"
 #include <acl/acl.h>
 #include <cerrno>
+#include <cstring>
+#include <fstream>
+#include <sstream>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #include "logger/logger.h"
 
 namespace UC::Trans {
+
+namespace {
+
+std::string ProcessResourceUsage()
+{
+    std::ostringstream os;
+    os << "pid=" << getpid();
+
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        os << " ru_maxrss_kb=" << usage.ru_maxrss;
+    }
+
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    const char* keys[] = {
+        "VmPeak:", "VmSize:", "VmLck:", "VmHWM:", "VmRSS:",
+        "VmData:", "VmSwap:", "Threads:",
+    };
+    while (std::getline(status, line)) {
+        for (const auto* key : keys) {
+            if (line.rfind(key, 0) == 0) {
+                os << " " << line;
+                break;
+            }
+        }
+    }
+
+    const char* cgroupPaths[] = {
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    };
+    for (const auto* path : cgroupPaths) {
+        std::ifstream cgroup(path);
+        if (!cgroup.good()) { continue; }
+        std::string value;
+        if (std::getline(cgroup, value)) { os << " cgroup_memory_current=" << value; }
+        break;
+    }
+    return os.str();
+}
+
+}  // namespace
 
 class HostHugePages : public std::enable_shared_from_this<HostHugePages> {
     struct ConstructorKey {};
@@ -88,6 +136,8 @@ public:
             return std::shared_ptr<void>(buffer_, [self = shared_from_this()](auto) {});
         }
         const auto useGiganticPages = size_ >= GIGANTIC_PAGE_SIZE;
+        UC_INFO("HostHugePages mmap begin size={} resources: {}.", size_,
+                ProcessResourceUsage());
         buffer_ = MMapWithTLB(size_, useGiganticPages);
         if (buffer_ == MAP_FAILED && useGiganticPages) { buffer_ = MMapWithTLB(size_, false); }
         if (buffer_ == MAP_FAILED) { buffer_ = MMapWithAdvice(size_); }
@@ -95,15 +145,25 @@ public:
             UC_ERROR("Failed to make host buffer({}).", size_);
             return nullptr;
         }
+        UC_INFO("HostHugePages mmap done ptr={} size={} resources: {}.", buffer_, size_,
+                ProcessResourceUsage());
+        UC_INFO("HostHugePages memset begin ptr={} size={} resources: {}.", buffer_, size_,
+                ProcessResourceUsage());
         std::memset(buffer_, 0, size_);
+        UC_INFO("HostHugePages memset done ptr={} size={} resources: {}.", buffer_, size_,
+                ProcessResourceUsage());
         errno = 0;
         const auto ret = mlock(buffer_, size_);
         if (ret != 0) {
-            UC_WARN("Mlock buffer({}) failed with errno({}).", size_, errno);
+            UC_WARN("Mlock buffer({}) failed with errno({}) resources: {}.", size_, errno,
+                    ProcessResourceUsage());
+        } else {
+            UC_INFO("Mlock buffer({}) done resources: {}.", size_, ProcessResourceUsage());
         }
         auto s = Buffer::RegisterHostBuffer(buffer_, size_);
         if (s.Failure()) {
-            UC_ERROR("Failed({}) to register buffer({}).", s, size_);
+            UC_ERROR("Failed({}) to register buffer({}) resources: {}.", s, size_,
+                     ProcessResourceUsage());
             munlock(buffer_, size_);
             munmap(buffer_, size_);
             buffer_ = MAP_FAILED;
@@ -142,14 +202,30 @@ Status Buffer::RegisterHostBuffer(void* host, size_t size, void** pDevice)
 {
     void* device = nullptr;
 #if ASCEND_SUPPORTS_REGISTER_PIN
+    constexpr auto branch = "aclrtHostRegisterV2";
+    UC_INFO("RegisterHostBuffer begin branch={} host={} size={} pDevice={} resources: {}.",
+            branch, host, size, static_cast<const void*>(pDevice), ProcessResourceUsage());
     auto ret = aclrtHostRegisterV2(host, size, ACL_HOST_REG_MAPPED | ACL_HOST_REG_PINNED);
-    if (ret != ACL_SUCCESS) [[unlikely]] { return Status{ret, std::to_string(ret)}; }
+    if (ret != ACL_SUCCESS) [[unlikely]] {
+        UC_ERROR("RegisterHostBuffer failed branch={} host={} size={} ret={} resources: {}.",
+                 branch, host, size, ret, ProcessResourceUsage());
+        return Status{ret, std::to_string(ret)};
+    }
     if (pDevice) { ret = aclrtHostGetDevicePointer(host, &device, 0); }
 #else
+    constexpr auto branch = "aclrtHostRegister";
+    UC_INFO("RegisterHostBuffer begin branch={} host={} size={} pDevice={} resources: {}.",
+            branch, host, size, static_cast<const void*>(pDevice), ProcessResourceUsage());
     auto ret = aclrtHostRegister(host, size, ACL_HOST_REGISTER_MAPPED, &device);
 #endif
-    if (ret != ACL_SUCCESS) [[unlikely]] { return Status{ret, std::to_string(ret)}; }
+    if (ret != ACL_SUCCESS) [[unlikely]] {
+        UC_ERROR("RegisterHostBuffer failed branch={} host={} size={} ret={} resources: {}.",
+                 branch, host, size, ret, ProcessResourceUsage());
+        return Status{ret, std::to_string(ret)};
+    }
     if (pDevice) { *pDevice = device; }
+    UC_INFO("RegisterHostBuffer done branch={} host={} size={} device={} resources: {}.",
+            branch, host, size, device, ProcessResourceUsage());
     return Status::OK();
 }
 

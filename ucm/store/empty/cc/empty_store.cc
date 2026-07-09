@@ -21,18 +21,65 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  * */
+#include <acl/acl.h>
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #include "trans/buffer.h"
-#include "trans/device.h"
 #include "ucmstore_v1.h"
 
 namespace UC::EmptyStore {
+
+namespace {
+
+std::string ProcessResourceUsage()
+{
+    std::ostringstream os;
+    os << "pid=" << getpid();
+
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        os << " ru_maxrss_kb=" << usage.ru_maxrss;
+    }
+
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    const char* keys[] = {
+        "VmPeak:", "VmSize:", "VmLck:", "VmHWM:", "VmRSS:",
+        "VmData:", "VmSwap:", "Threads:",
+    };
+    while (std::getline(status, line)) {
+        for (const auto* key : keys) {
+            if (line.rfind(key, 0) == 0) {
+                os << " " << line;
+                break;
+            }
+        }
+    }
+
+    const char* cgroupPaths[] = {
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    };
+    for (const auto* path : cgroupPaths) {
+        std::ifstream cgroup(path);
+        if (!cgroup.good()) { continue; }
+        std::string value;
+        if (std::getline(cgroup, value)) { os << " cgroup_memory_current=" << value; }
+        break;
+    }
+    return os.str();
+}
+
+}  // namespace
 
 std::vector<uint8_t> OnLookup(size_t num) { return std::vector<uint8_t>(num, false); }
 
@@ -41,9 +88,16 @@ public:
     ~EmptyStore() override
     {
         if (registeredHostBuffer_) { Trans::Buffer::UnregisterHostBuffer(mmapBuffer_); }
-        if (mmapBuffer_ == MAP_FAILED) { return; }
-        (void)munlock(mmapBuffer_, mmapSize_);
-        (void)munmap(mmapBuffer_, mmapSize_);
+        if (mmapBuffer_ != MAP_FAILED) {
+            (void)munlock(mmapBuffer_, mmapSize_);
+            (void)munmap(mmapBuffer_, mmapSize_);
+        }
+        if (deviceSet_) {
+            auto ret = aclrtResetDevice(deviceId_);
+            std::cout << "EmptyStore mmap probe aclrtResetDevice ret=" << ret
+                      << " device=" << deviceId_ << " resources: "
+                      << ProcessResourceUsage() << std::endl;
+        }
     }
     Status Setup(const Detail::Dictionary& config)
     {
@@ -55,49 +109,64 @@ public:
         config.GetNumber("device_id", deviceId);
         if (deviceId < 0) {
             std::cout << "EmptyStore skip mmap allocation on non-worker device(" << deviceId
-                      << ")." << std::endl;
+                      << ") resources: " << ProcessResourceUsage() << "." << std::endl;
             return Status::OK();
         }
         if (totalGb > SIZE_MAX / GiB) {
             return Status::InvalidParam("invalid cache_buffer_capacity_gb");
         }
 
-        Trans::Device device;
-        auto s = device.Setup(static_cast<int32_t>(deviceId));
-        if (s.Failure()) { return s; }
+        deviceId_ = static_cast<int32_t>(deviceId);
+        auto ret = aclrtSetDevice(deviceId_);
+        std::cout << "EmptyStore mmap probe aclrtSetDevice ret=" << ret
+                  << " device=" << deviceId_ << " resources: "
+                  << ProcessResourceUsage() << std::endl;
+        if (ret != ACL_SUCCESS) { return Status{ret, std::to_string(ret)}; }
+        deviceSet_ = true;
 
         mmapSize_ = AlignUp(totalGb * GiB, HugePageSize);
+        std::cout << "EmptyStore mmap probe mmap begin size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
         mmapBuffer_ = mmap(nullptr, mmapSize_, PROT_READ | PROT_WRITE,
                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mmapBuffer_ == MAP_FAILED) {
             return Status::OsApiError("empty mmap failed errno " + std::to_string(errno));
         }
+        std::cout << "EmptyStore mmap probe mmap done ptr=" << mmapBuffer_
+                  << " size=" << mmapSize_ << " resources: " << ProcessResourceUsage()
+                  << std::endl;
 
         errno = 0;
-        auto ret = madvise(mmapBuffer_, mmapSize_, MADV_HUGEPAGE);
+        ret = madvise(mmapBuffer_, mmapSize_, MADV_HUGEPAGE);
         std::cout << "EmptyStore mmap probe madvise ret=" << ret << " errno="
-                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
         if (ret != 0) {
             return Status::OsApiError("empty madvise failed errno " + std::to_string(errno));
         }
 
-        std::cout << "EmptyStore mmap probe touch once begin size=" << mmapSize_ << std::endl;
+        std::cout << "EmptyStore mmap probe touch once begin size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
         std::memset(mmapBuffer_, 0, mmapSize_);
-        std::cout << "EmptyStore mmap probe touch once done size=" << mmapSize_ << std::endl;
+        std::cout << "EmptyStore mmap probe touch once done size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
 
         errno = 0;
         ret = mlock(mmapBuffer_, mmapSize_);
         std::cout << "EmptyStore mmap probe mlock ret=" << ret << " errno="
-                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_ << std::endl;
+                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
         if (ret != 0) {
             return Status::OsApiError("empty mlock failed errno " + std::to_string(errno));
         }
 
         std::cout << "EmptyStore mmap probe register begin ptr=" << mmapBuffer_
-                  << " size=" << mmapSize_ << std::endl;
-        s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
+                  << " size=" << mmapSize_ << " resources: " << ProcessResourceUsage()
+                  << std::endl;
+        auto s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
         std::cout << "EmptyStore mmap probe register status=" << s.ToString()
-                  << " ptr=" << mmapBuffer_ << " size=" << mmapSize_ << std::endl;
+                  << " ptr=" << mmapBuffer_ << " size=" << mmapSize_
+                  << " resources: " << ProcessResourceUsage() << std::endl;
         if (s.Failure()) { return s; }
         registeredHostBuffer_ = true;
         return Status::OK();
@@ -122,6 +191,8 @@ private:
     void* mmapBuffer_{MAP_FAILED};
     size_t mmapSize_{0};
     bool registeredHostBuffer_{false};
+    int32_t deviceId_{0};
+    bool deviceSet_{false};
 
     static size_t AlignUp(size_t size, size_t alignment)
     {

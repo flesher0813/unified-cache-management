@@ -28,10 +28,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>
+#include <sys/resource.h>
+#include <unistd.h>
 #include <vector>
 #include "trans/buffer.h"
 
@@ -171,30 +175,79 @@ double NowSec()
     return std::chrono::duration<double>(Clock::now() - start).count();
 }
 
+std::string ProcessResourceUsage()
+{
+    std::ostringstream os;
+    os << "pid=" << getpid();
+
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        os << " ru_maxrss_kb=" << usage.ru_maxrss;
+    }
+
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    const char* keys[] = {
+        "VmPeak:", "VmSize:", "VmLck:", "VmHWM:", "VmRSS:",
+        "VmData:", "VmSwap:", "Threads:",
+    };
+    while (std::getline(status, line)) {
+        for (const auto* key : keys) {
+            if (line.rfind(key, 0) == 0) {
+                os << " " << line;
+                break;
+            }
+        }
+    }
+
+    const char* cgroupPaths[] = {
+        "/sys/fs/cgroup/memory.current",
+        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
+    };
+    for (const auto* path : cgroupPaths) {
+        std::ifstream cgroup(path);
+        if (!cgroup.good()) { continue; }
+        std::string value;
+        if (std::getline(cgroup, value)) { os << " cgroup_memory_current=" << value; }
+        break;
+    }
+    return os.str();
+}
+
 void* MMapWithAdvice(size_t& size)
 {
     size = AlignUp(size, HugePageSize);
+    std::cout << "mmap begin size=" << size << " resources: " << ProcessResourceUsage()
+              << "\n";
     void* ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (ptr == MAP_FAILED) {
         std::cerr << "mmap failed size=" << size << " errno=" << errno << "\n";
         return MAP_FAILED;
     }
     auto ret = madvise(ptr, size, MADV_HUGEPAGE);
-    std::cout << "madvise ret=" << ret << " errno=" << (ret == 0 ? 0 : errno) << "\n";
+    std::cout << "mmap done ptr=" << ptr << " size=" << size
+              << " resources: " << ProcessResourceUsage() << "\n";
+    std::cout << "madvise ret=" << ret << " errno=" << (ret == 0 ? 0 : errno)
+              << " resources: " << ProcessResourceUsage() << "\n";
     return ptr;
 }
 
 void TouchOnce(void* ptr, size_t size)
 {
     const auto start = NowSec();
+    std::cout << "touch once begin size=" << size << " (" << GiBString(size)
+              << " GiB) resources: " << ProcessResourceUsage() << "\n";
     std::memset(ptr, 0, size);
     std::cout << "touch once done size=" << size << " (" << GiBString(size)
-              << " GiB) elapsed=" << NowSec() - start << "s\n";
+              << " GiB) elapsed=" << NowSec() - start
+              << "s resources: " << ProcessResourceUsage() << "\n";
 }
 
 void TouchStep(void* ptr, size_t size)
 {
     const auto start = NowSec();
+    std::cout << "touch step begin size=" << size << " (" << GiBString(size)
+              << " GiB) resources: " << ProcessResourceUsage() << "\n";
     auto* base = static_cast<std::byte*>(ptr);
     constexpr size_t step = GiB;
     for (size_t offset = 0; offset < size; offset += step) {
@@ -204,7 +257,8 @@ void TouchStep(void* ptr, size_t size)
                   << GiBString(offset + len) << "/" << GiBString(size) << " GiB)\n";
     }
     std::cout << "touch step done size=" << size << " (" << GiBString(size)
-              << " GiB) elapsed=" << NowSec() - start << "s\n";
+              << " GiB) elapsed=" << NowSec() - start
+              << "s resources: " << ProcessResourceUsage() << "\n";
 }
 
 void Touch(void* ptr, size_t size, const std::string& mode)
@@ -224,23 +278,27 @@ void MaybeMlock(void* ptr, size_t size)
 {
     errno = 0;
     const auto start = NowSec();
+    std::cout << "mlock begin size=" << size << " resources: " << ProcessResourceUsage()
+              << "\n";
     auto ret = mlock(ptr, size);
     auto eno = errno;
     std::cout << "mlock ret=" << ret << " errno=" << (ret == 0 ? 0 : eno)
-              << " elapsed=" << NowSec() - start << "s\n";
+              << " elapsed=" << NowSec() - start
+              << "s resources: " << ProcessResourceUsage() << "\n";
 }
 
 bool RegisterRange(const char* tag, void* ptr, size_t size)
 {
     errno = 0;
     std::cout << tag << " register begin ptr=" << ptr << " size=" << size << " ("
-              << GiBString(size) << " GiB)\n";
+              << GiBString(size) << " GiB) resources: " << ProcessResourceUsage() << "\n";
     const auto start = NowSec();
     auto status = UC::Trans::Buffer::RegisterHostBuffer(ptr, size);
     auto eno = errno;
     std::cout << tag << " register ptr=" << ptr << " size=" << size << " ("
               << GiBString(size) << " GiB) status=" << status.ToString()
-              << " errno=" << eno << " elapsed=" << NowSec() - start << "s\n";
+              << " errno=" << eno << " elapsed=" << NowSec() - start
+              << "s resources: " << ProcessResourceUsage() << "\n";
     return status.Success();
 }
 
@@ -302,6 +360,8 @@ int main(int argc, char** argv)
         std::cerr << "aclrtSetDevice(" << config.deviceId << ") failed ret=" << ret << "\n";
         return 1;
     }
+    std::cout << "aclrtSetDevice done deviceId=" << config.deviceId
+              << " resources: " << ProcessResourceUsage() << "\n";
 
     auto mapSize = config.totalSize;
     void* ptr = MMapWithAdvice(mapSize);
@@ -315,6 +375,8 @@ int main(int argc, char** argv)
     if (config.runChunked) { RunChunked(ptr, mapSize, config.chunkSize); }
 
     munmap(ptr, mapSize);
-    aclrtResetDevice(config.deviceId);
+    ret = aclrtResetDevice(config.deviceId);
+    std::cout << "aclrtResetDevice ret=" << ret << " deviceId=" << config.deviceId
+              << " resources: " << ProcessResourceUsage() << "\n";
     return 0;
 }
