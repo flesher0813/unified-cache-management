@@ -46,7 +46,7 @@ struct Config {
     int32_t deviceId{0};
     size_t totalSize{0};
     size_t chunkSize{0};
-    bool touchFull{true};
+    std::string touchMode{"step"};
     bool doMlock{false};
     bool runSingle{true};
     bool runChunked{true};
@@ -63,7 +63,8 @@ void Usage(const char* prog)
         << "  --chunk-gb N      Per-register chunk size in GiB.\n"
         << "  --chunk-mb N      Per-register chunk size in MiB.\n"
         << "  --device-id N     Ascend device id, default 0.\n"
-        << "  --touch full      memset the whole mapping before register, default.\n"
+        << "  --touch step      memset the whole mapping by 1GiB steps, default.\n"
+        << "  --touch once      memset the whole mapping with one memset call.\n"
         << "  --touch none      do not touch the mapping before register.\n"
         << "  --mlock           call mlock(total) before register and log result.\n"
         << "  --mode both       Run single total register and chunked register, default.\n"
@@ -120,10 +121,10 @@ bool ParseArgs(int argc, char** argv, Config& config)
             config.deviceId = static_cast<int32_t>(value);
         } else if (opt == "--touch") {
             const auto value = requireValue(opt);
-            if (value == "full") {
-                config.touchFull = true;
-            } else if (value == "none") {
-                config.touchFull = false;
+            if (value == "step" || value == "once" || value == "none") {
+                config.touchMode = value;
+            } else if (value == "full") {
+                config.touchMode = "step";
             } else {
                 return false;
             }
@@ -183,7 +184,15 @@ void* MMapWithAdvice(size_t& size)
     return ptr;
 }
 
-void TouchFull(void* ptr, size_t size)
+void TouchOnce(void* ptr, size_t size)
+{
+    const auto start = NowSec();
+    std::memset(ptr, 0, size);
+    std::cout << "touch once done size=" << size << " (" << GiBString(size)
+              << " GiB) elapsed=" << NowSec() - start << "s\n";
+}
+
+void TouchStep(void* ptr, size_t size)
 {
     const auto start = NowSec();
     auto* base = static_cast<std::byte*>(ptr);
@@ -194,8 +203,21 @@ void TouchFull(void* ptr, size_t size)
         std::cout << "touch progress " << offset + len << "/" << size << " ("
                   << GiBString(offset + len) << "/" << GiBString(size) << " GiB)\n";
     }
-    std::cout << "touch full done size=" << size << " (" << GiBString(size)
+    std::cout << "touch step done size=" << size << " (" << GiBString(size)
               << " GiB) elapsed=" << NowSec() - start << "s\n";
+}
+
+void Touch(void* ptr, size_t size, const std::string& mode)
+{
+    if (mode == "none") {
+        std::cout << "touch skipped\n";
+        return;
+    }
+    if (mode == "once") {
+        TouchOnce(ptr, size);
+        return;
+    }
+    TouchStep(ptr, size);
 }
 
 void MaybeMlock(void* ptr, size_t size)
@@ -272,7 +294,7 @@ int main(int argc, char** argv)
 
     std::cout << "deviceId=" << config.deviceId << " totalSize=" << config.totalSize << " ("
               << GiBString(config.totalSize) << " GiB) chunkSize=" << config.chunkSize << " ("
-              << GiBString(config.chunkSize) << " GiB) touchFull=" << config.touchFull
+              << GiBString(config.chunkSize) << " GiB) touchMode=" << config.touchMode
               << " mlock=" << config.doMlock << "\n";
 
     auto ret = aclrtSetDevice(config.deviceId);
@@ -287,7 +309,7 @@ int main(int argc, char** argv)
     std::cout << "mmap ptr=" << ptr << " mapSize=" << mapSize << " (" << GiBString(mapSize)
               << " GiB)\n";
 
-    if (config.touchFull) { TouchFull(ptr, mapSize); }
+    Touch(ptr, mapSize, config.touchMode);
     if (config.doMlock) { MaybeMlock(ptr, mapSize); }
     if (config.runSingle) { RunSingle(ptr, mapSize); }
     if (config.runChunked) { RunChunked(ptr, mapSize, config.chunkSize); }
