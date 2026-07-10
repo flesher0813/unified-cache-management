@@ -46,19 +46,27 @@ std::string ProcessResourceUsage()
         os << " ru_maxrss_kb=" << usage.ru_maxrss;
     }
 
+    auto appendStatusNumber = [](std::ostringstream& out, const std::string& line,
+                                 const char* key, const char* name, const char* suffix) {
+        if (line.rfind(key, 0) != 0) { return false; }
+        auto begin = line.find_first_not_of(" \t", std::strlen(key));
+        if (begin == std::string::npos) { return true; }
+        auto end = line.find_first_of(" \t", begin);
+        out << " " << name << suffix << "=" << line.substr(begin, end - begin);
+        return true;
+    };
+
     std::ifstream status("/proc/self/status");
     std::string line;
-    const char* keys[] = {
-        "VmPeak:", "VmSize:", "VmLck:", "VmHWM:", "VmRSS:",
-        "VmData:", "VmSwap:", "Threads:",
-    };
     while (std::getline(status, line)) {
-        for (const auto* key : keys) {
-            if (line.rfind(key, 0) == 0) {
-                os << " " << line;
-                break;
-            }
-        }
+        if (appendStatusNumber(os, line, "VmPeak:", "vm_peak", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmSize:", "vm_size", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmLck:", "vm_lck", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmHWM:", "vm_hwm", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmRSS:", "vm_rss", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmData:", "vm_data", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "VmSwap:", "vm_swap", "_kb")) { continue; }
+        if (appendStatusNumber(os, line, "Threads:", "threads", "")) { continue; }
     }
 
     const char* cgroupPaths[] = {
@@ -69,7 +77,7 @@ std::string ProcessResourceUsage()
         std::ifstream cgroup(path);
         if (!cgroup.good()) { continue; }
         std::string value;
-        if (std::getline(cgroup, value)) { os << " cgroup_memory_current=" << value; }
+        if (std::getline(cgroup, value)) { os << " cg_mem_bytes=" << value; }
         break;
     }
     return os.str();
@@ -202,30 +210,14 @@ Status Buffer::RegisterHostBuffer(void* host, size_t size, void** pDevice)
 {
     void* device = nullptr;
 #if ASCEND_SUPPORTS_REGISTER_PIN
-    constexpr auto branch = "aclrtHostRegisterV2";
-    UC_INFO("RegisterHostBuffer begin branch={} host={} size={} pDevice={} resources: {}.",
-            branch, host, size, static_cast<const void*>(pDevice), ProcessResourceUsage());
     auto ret = aclrtHostRegisterV2(host, size, ACL_HOST_REG_MAPPED | ACL_HOST_REG_PINNED);
-    if (ret != ACL_SUCCESS) [[unlikely]] {
-        UC_ERROR("RegisterHostBuffer failed branch={} host={} size={} ret={} resources: {}.",
-                 branch, host, size, ret, ProcessResourceUsage());
-        return Status{ret, std::to_string(ret)};
-    }
+    if (ret != ACL_SUCCESS) [[unlikely]] { return Status{ret, std::to_string(ret)}; }
     if (pDevice) { ret = aclrtHostGetDevicePointer(host, &device, 0); }
 #else
-    constexpr auto branch = "aclrtHostRegister";
-    UC_INFO("RegisterHostBuffer begin branch={} host={} size={} pDevice={} resources: {}.",
-            branch, host, size, static_cast<const void*>(pDevice), ProcessResourceUsage());
     auto ret = aclrtHostRegister(host, size, ACL_HOST_REGISTER_MAPPED, &device);
 #endif
-    if (ret != ACL_SUCCESS) [[unlikely]] {
-        UC_ERROR("RegisterHostBuffer failed branch={} host={} size={} ret={} resources: {}.",
-                 branch, host, size, ret, ProcessResourceUsage());
-        return Status{ret, std::to_string(ret)};
-    }
+    if (ret != ACL_SUCCESS) [[unlikely]] { return Status{ret, std::to_string(ret)}; }
     if (pDevice) { *pDevice = device; }
-    UC_INFO("RegisterHostBuffer done branch={} host={} size={} device={} resources: {}.",
-            branch, host, size, device, ProcessResourceUsage());
     return Status::OK();
 }
 
