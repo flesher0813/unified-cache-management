@@ -30,7 +30,6 @@
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <sys/mman.h>
 #include <sys/resource.h>
 #include <unistd.h>
 #include <vector>
@@ -96,20 +95,16 @@ class EmptyStore : public StoreV1 {
 public:
     ~EmptyStore() override
     {
-        for (auto& chunk : mmapChunks_) {
-            if (chunk.registered) { Trans::Buffer::UnregisterHostBuffer(chunk.ptr); }
-            if (chunk.ptr == MAP_FAILED) { continue; }
-            (void)munlock(chunk.ptr, chunk.size);
-            (void)munmap(chunk.ptr, chunk.size);
-        }
-        if (registeredHostBuffer_) { Trans::Buffer::UnregisterHostBuffer(mmapBuffer_); }
-        if (mmapBuffer_ != MAP_FAILED) {
-            (void)munlock(mmapBuffer_, mmapSize_);
-            (void)munmap(mmapBuffer_, mmapSize_);
+        if (registeredMappedHost_) { Trans::Buffer::UnregisterHostBuffer(hostBuffer_); }
+        if (hostBuffer_ != nullptr) {
+            auto ret = aclrtFreeHost(hostBuffer_);
+            std::cout << "EmptyStore gqa iodirect=false probe aclrtFreeHost ret=" << ret
+                      << " ptr=" << hostBuffer_ << " size=" << hostBufferSize_
+                      << " resources: " << ProcessResourceUsage() << std::endl;
         }
         if (deviceSet_) {
             auto ret = aclrtResetDevice(deviceId_);
-            std::cout << "EmptyStore mmap probe aclrtResetDevice ret=" << ret
+            std::cout << "EmptyStore gqa iodirect=false probe aclrtResetDevice ret=" << ret
                       << " device=" << deviceId_ << " resources: "
                       << ProcessResourceUsage() << std::endl;
         }
@@ -119,33 +114,31 @@ public:
         size_t totalGb = 0;
         config.GetNumber("cache_buffer_capacity_gb", totalGb);
         if (totalGb == 0) { return Status::OK(); }
-        size_t chunkGb = 0;
-        config.GetNumber("empty_register_chunk_gb", chunkGb);
 
         int64_t deviceId = -1;
         config.GetNumber("device_id", deviceId);
         if (deviceId < 0) {
-            std::cout << "EmptyStore skip mmap allocation on non-worker device(" << deviceId
+            std::cout << "EmptyStore skip host allocation on non-worker device(" << deviceId
                       << ") resources: " << ProcessResourceUsage() << "." << std::endl;
             return Status::OK();
         }
         if (totalGb > SIZE_MAX / GiB) {
             return Status::InvalidParam("invalid cache_buffer_capacity_gb");
         }
-        if (chunkGb > SIZE_MAX / GiB) {
-            return Status::InvalidParam("invalid empty_register_chunk_gb");
-        }
 
         deviceId_ = static_cast<int32_t>(deviceId);
         auto ret = aclrtSetDevice(deviceId_);
-        std::cout << "EmptyStore mmap probe aclrtSetDevice ret=" << ret
+        std::cout << "EmptyStore gqa iodirect=false probe aclrtSetDevice ret=" << ret
                   << " device=" << deviceId_ << " resources: "
                   << ProcessResourceUsage() << std::endl;
         if (ret != ACL_SUCCESS) { return Status{ret, std::to_string(ret)}; }
         deviceSet_ = true;
 
-        if (chunkGb > 0) { return SetupByChunks(totalGb * GiB, chunkGb * GiB); }
-        return SetupSingle(totalGb * GiB);
+        size_t shardSize = 0;
+        config.GetNumber("shard_size", shardSize);
+        bool cacheSdmaDirect = false;
+        config.Get("cache_sdma_direct", cacheSdmaDirect);
+        return SetupGqaIoDirectFalse(totalGb * GiB, shardSize, cacheSdmaDirect);
     }
     std::string Readme() const { return "EmptyStore"; }
     Expected<std::vector<uint8_t>> Lookup(const Detail::BlockId* blocks, size_t num)
@@ -160,166 +153,62 @@ public:
     Status Wait(Detail::TaskHandle taskId) { return Status::OK(); }
 
 private:
-    struct MMapChunk {
-        void* ptr{MAP_FAILED};
-        size_t size{0};
-        bool registered{false};
-    };
-
     static constexpr size_t KiB = 1024ULL;
     static constexpr size_t MiB = KiB * KiB;
     static constexpr size_t GiB = KiB * MiB;
-    static constexpr size_t HugePageSize = 2 * MiB;
-    void* mmapBuffer_{MAP_FAILED};
-    size_t mmapSize_{0};
-    bool registeredHostBuffer_{false};
+    void* hostBuffer_{nullptr};
+    size_t hostBufferSize_{0};
+    void* deviceBuffer_{nullptr};
+    bool registeredMappedHost_{false};
     int32_t deviceId_{0};
     bool deviceSet_{false};
-    std::vector<MMapChunk> mmapChunks_;
 
-    Status SetupSingle(size_t totalSize)
+    Status SetupGqaIoDirectFalse(size_t totalSize, size_t shardSize, bool cacheSdmaDirect)
     {
-        mmapSize_ = AlignUp(totalSize, HugePageSize);
-        std::cout << "EmptyStore mmap probe mmap begin size=" << mmapSize_
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        mmapBuffer_ = mmap(nullptr, mmapSize_, PROT_READ | PROT_WRITE,
-                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (mmapBuffer_ == MAP_FAILED) {
-            return Status::OsApiError("empty mmap failed errno " + std::to_string(errno));
-        }
-        std::cout << "EmptyStore mmap probe mmap done ptr=" << mmapBuffer_
-                  << " size=" << mmapSize_ << " resources: " << ProcessResourceUsage()
-                  << std::endl;
-
-        errno = 0;
-        auto ret = madvise(mmapBuffer_, mmapSize_, MADV_HUGEPAGE);
-        std::cout << "EmptyStore mmap probe madvise ret=" << ret << " errno="
-                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        if (ret != 0) {
-            return Status::OsApiError("empty madvise failed errno " + std::to_string(errno));
+        if (shardSize != 0) { totalSize = totalSize / shardSize * shardSize; }
+        if (totalSize == 0) {
+            return Status::InvalidParam("cache_buffer_capacity_gb is smaller than shard_size");
         }
 
-        std::cout << "EmptyStore mmap probe touch once begin size=" << mmapSize_
+        hostBufferSize_ = totalSize;
+        std::cout << "EmptyStore gqa iodirect=false probe aclrtMallocHost begin size="
+                  << hostBufferSize_ << " shard_size=" << shardSize
                   << " resources: " << ProcessResourceUsage() << std::endl;
-        std::memset(mmapBuffer_, 0, mmapSize_);
-        std::cout << "EmptyStore mmap probe touch once done size=" << mmapSize_
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-
         errno = 0;
-        ret = mlock(mmapBuffer_, mmapSize_);
-        std::cout << "EmptyStore mmap probe mlock ret=" << ret << " errno="
-                  << (ret == 0 ? 0 : errno) << " size=" << mmapSize_
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        if (ret != 0) {
-            return Status::OsApiError("empty mlock failed errno " + std::to_string(errno));
-        }
-
-        std::cout << "EmptyStore mmap probe register begin ptr=" << mmapBuffer_
-                  << " size=" << mmapSize_ << " resources: " << ProcessResourceUsage()
-                  << std::endl;
-        errno = 0;
-        auto s = Trans::Buffer::RegisterHostBuffer(mmapBuffer_, mmapSize_);
+        auto ret = aclrtMallocHost(&hostBuffer_, hostBufferSize_);
         auto err = errno;
-        std::cout << "EmptyStore mmap probe register status=" << s.ToString()
-                  << " errno=" << err << " ptr=" << mmapBuffer_ << " size=" << mmapSize_
+        std::cout << "EmptyStore gqa iodirect=false probe aclrtMallocHost ret=" << ret
+                  << " errno=" << err << " ptr=" << hostBuffer_
+                  << " size=" << hostBufferSize_
                   << " resources: " << ProcessResourceUsage() << std::endl;
-        if (s.Failure()) {
-            std::cerr << "EmptyStore mmap probe register failed status=" << s.ToString()
-                      << " errno=" << err << " ptr=" << mmapBuffer_
-                      << " size=" << mmapSize_ << " resources: "
-                      << ProcessResourceUsage() << std::endl;
-            return s;
-        }
-        registeredHostBuffer_ = true;
-        return Status::OK();
-    }
-
-    Status SetupByChunks(size_t totalSize, size_t chunkSize)
-    {
-        if (chunkSize == 0) { return Status::InvalidParam("invalid empty_register_chunk_gb"); }
-        auto remaining = totalSize;
-        size_t index = 0;
-        while (remaining > 0) {
-            auto size = remaining < chunkSize ? remaining : chunkSize;
-            auto s = AllocateRegisterChunk(index, size);
-            if (s.Failure()) { return s; }
-            remaining -= size;
-            index++;
-        }
-        std::cout << "EmptyStore mmap probe chunk register done chunks=" << mmapChunks_.size()
-                  << " total_size=" << totalSize << " chunk_size=" << chunkSize
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        return Status::OK();
-    }
-
-    Status AllocateRegisterChunk(size_t index, size_t size)
-    {
-        auto alignedSize = AlignUp(size, HugePageSize);
-        MMapChunk chunk{MAP_FAILED, alignedSize, false};
-
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] mmap begin size="
-                  << alignedSize << " resources: " << ProcessResourceUsage() << std::endl;
-        chunk.ptr = mmap(nullptr, alignedSize, PROT_READ | PROT_WRITE,
-                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (chunk.ptr == MAP_FAILED) {
-            return Status::OsApiError("empty chunk mmap failed errno " + std::to_string(errno));
-        }
-        mmapChunks_.push_back(chunk);
-        auto& current = mmapChunks_.back();
-
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] mmap done ptr="
-                  << current.ptr << " size=" << current.size
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-
-        errno = 0;
-        auto ret = madvise(current.ptr, current.size, MADV_HUGEPAGE);
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] madvise ret=" << ret
-                  << " errno=" << (ret == 0 ? 0 : errno) << " size=" << current.size
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        if (ret != 0) {
-            return Status::OsApiError("empty chunk madvise failed errno " + std::to_string(errno));
-        }
-
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] touch once begin size="
-                  << current.size << " resources: " << ProcessResourceUsage() << std::endl;
-        std::memset(current.ptr, 0, current.size);
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] touch once done size="
-                  << current.size << " resources: " << ProcessResourceUsage() << std::endl;
-
-        errno = 0;
-        ret = mlock(current.ptr, current.size);
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] mlock ret=" << ret
-                  << " errno=" << (ret == 0 ? 0 : errno) << " size=" << current.size
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        if (ret != 0) {
-            return Status::OsApiError("empty chunk mlock failed errno " + std::to_string(errno));
-        }
-
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] register begin ptr="
-                  << current.ptr << " size=" << current.size
-                  << " resources: " << ProcessResourceUsage() << std::endl;
-        errno = 0;
-        auto s = Trans::Buffer::RegisterHostBuffer(current.ptr, current.size);
-        auto err = errno;
-        std::cout << "EmptyStore mmap probe chunk[" << index << "] register status="
-                  << s.ToString() << " errno=" << err << " ptr=" << current.ptr
-                  << " size=" << current.size << " resources: " << ProcessResourceUsage()
-                  << std::endl;
-        if (s.Failure()) {
-            std::cerr << "EmptyStore mmap probe chunk[" << index
-                      << "] register failed status=" << s.ToString() << " errno=" << err
-                      << " ptr=" << current.ptr << " size=" << current.size
+        if (ret != ACL_SUCCESS) {
+            std::cerr << "EmptyStore gqa iodirect=false probe aclrtMallocHost failed ret="
+                      << ret << " errno=" << err << " size=" << hostBufferSize_
                       << " resources: " << ProcessResourceUsage() << std::endl;
-            return s;
+            return Status{ret, std::to_string(ret)};
         }
-        current.registered = true;
+        if (cacheSdmaDirect) {
+            std::cout << "EmptyStore gqa iodirect=false probe RegisterHostBuffer begin ptr="
+                      << hostBuffer_ << " size=" << hostBufferSize_
+                      << " resources: " << ProcessResourceUsage() << std::endl;
+            errno = 0;
+            auto s = Trans::Buffer::RegisterHostBuffer(hostBuffer_, hostBufferSize_,
+                                                       &deviceBuffer_);
+            err = errno;
+            std::cout << "EmptyStore gqa iodirect=false probe RegisterHostBuffer status="
+                      << s.ToString() << " errno=" << err << " ptr=" << hostBuffer_
+                      << " size=" << hostBufferSize_ << " device_ptr=" << deviceBuffer_
+                      << " resources: " << ProcessResourceUsage() << std::endl;
+            if (s.Failure()) {
+                std::cerr << "EmptyStore gqa iodirect=false probe RegisterHostBuffer failed"
+                          << " status=" << s.ToString() << " errno=" << err
+                          << " ptr=" << hostBuffer_ << " size=" << hostBufferSize_
+                          << " resources: " << ProcessResourceUsage() << std::endl;
+                return s;
+            }
+            registeredMappedHost_ = true;
+        }
         return Status::OK();
-    }
-
-    static size_t AlignUp(size_t size, size_t alignment)
-    {
-        return (size + alignment - 1) / alignment * alignment;
     }
     static Detail::TaskHandle NextId() noexcept
     {
