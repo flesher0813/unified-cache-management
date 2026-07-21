@@ -292,8 +292,9 @@ class RequestHasher:
             spec_method = getattr(speculative_config, "method", "") or ""
             spec_tokens = getattr(speculative_config, "num_speculative_tokens", 0)
             spec_info = f":{spec_method}:{spec_tokens}"
+        model_name = vllm_config.model_config.model.rstrip("/").split("/")[-1]
         meta = (
-            f"{vllm_config.model_config.model}:"
+            f"{model_name}:"
             f"{vllm_config.parallel_config.tensor_parallel_size}:"
             f"{vllm_config.model_config.dtype}:{rank_id}{spec_info}"
         )
