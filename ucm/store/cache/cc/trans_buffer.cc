@@ -532,6 +532,8 @@ protected:
         }
         s = MapDataSegments(true);
         if (s.Failure()) [[unlikely]] { return s; }
+        // Shared-memory readiness is independent of per-device registration.
+        header_->magic = sharedBufferMagic;
         return Status::OK();
     }
     Status LoadShmBuffer(PosixShm& shmFile)
@@ -626,17 +628,15 @@ public:
         if (s.Success()) {
             owner_ = true;
             s = InitShmBuffer(shmFile);
-            if (s.Success()) { s = RegisterBuffer(deviceId); }
-            if (s.Success()) { header_->magic = sharedBufferMagic; }
         } else if (s == Status::DuplicateKey()) {
             s = LoadShmBuffer(shmFile);
-            if (s.Success()) { s = RegisterBuffer(deviceId); }
         } else {
             UC_ERROR("Failed({}) to open file({}) with flags({}).", s, segments_[0].shmName,
                      flags);
             return s;
         }
-        return s;
+        if (s.Failure()) [[unlikely]] { return s; }
+        return RegisterBuffer(deviceId);
     }
     void BucketLock(size_t iBucket) override { header_->bucketLocks[iBucket].Lock(); }
     bool BucketTryLock(size_t iBucket) override { return header_->bucketLocks[iBucket].TryLock(); }
