@@ -152,6 +152,9 @@ private:
         size_t bufferCapacityGb = 0;
         config.GetNumber("cache_buffer_capacity_gb", bufferCapacityGb);
         if (bufferCapacityGb != 0) { param.bufferCapacity = bufferCapacityGb << 30; }
+        size_t cacheSegmentSizeGb = param.cacheSegmentSize >> 30;
+        config.GetNumber("cache_segment_size_gb", cacheSegmentSizeGb);
+        param.cacheSegmentSize = cacheSegmentSizeGb << 30;
         config.GetNumber("waiting_queue_depth", param.waitingQueueDepth);
         config.GetNumber("running_queue_depth", param.runningQueueDepth);
         config.GetNumber("timeout_ms", param.timeoutMs);
@@ -241,6 +244,7 @@ private:
         UC_INFO("Set {}::IoDirect to {}.", ns, config.ioDirect);
         UC_INFO("Set {}::CpuAffinityCores to {}.", ns, config.cpuAffinityCores);
         UC_INFO("Set {}::BufferCapacity to {}GB.", ns, config.bufferCapacity >> 30);
+        UC_INFO("Set {}::CacheSegmentSize to {}GB.", ns, config.cacheSegmentSize >> 30);
         UC_INFO("Set {}::ShareBufferEnable to {}.", ns, config.shareBufferEnable);
         UC_INFO("Set {}::WaitingQueueDepth to {}.", ns, config.waitingQueueDepth);
         UC_INFO("Set {}::RunningQueueDepth to {}.", ns, config.runningQueueDepth);

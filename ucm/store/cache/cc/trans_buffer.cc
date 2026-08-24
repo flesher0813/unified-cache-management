@@ -22,9 +22,11 @@
  * SOFTWARE.
  * */
 #include "trans_buffer.h"
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 #include "logger/logger.h"
 #include "posix_shm.h"
@@ -73,12 +75,14 @@ protected:
         size_t nodeSize{0};
         size_t totalSize{0};
         size_t reservedNumber{0};
+        size_t segmentSize{0};
     };
     BaseConfig base_;
 
 public:
-    BufferStrategy(int32_t deviceId, size_t nodeSize, size_t totalSize, size_t reservedNumber)
-        : base_({deviceId, nodeSize, totalSize, reservedNumber})
+    BufferStrategy(int32_t deviceId, size_t nodeSize, size_t totalSize, size_t reservedNumber,
+                   size_t segmentSize)
+        : base_({deviceId, nodeSize, totalSize, reservedNumber, segmentSize})
     {
     }
     virtual ~BufferStrategy() = default;
@@ -93,6 +97,24 @@ public:
     virtual void* DataAt(size_t iNode) = 0;
     virtual void* DeviceDataAt(size_t iNode) = 0;
     virtual BufferMetaNode* MetaAt(size_t iNode) = 0;
+
+protected:
+    static constexpr size_t segmentLogInterval = 8;
+    static bool ShouldLogSegmentProgress(size_t idx, size_t segmentCount)
+    {
+        return idx == 0 || idx + 1 == segmentCount || (idx + 1) % segmentLogInterval == 0;
+    }
+    size_t SuggestedCapacity() const noexcept
+    {
+        const auto segmentSize = base_.segmentSize == 0 ? base_.totalSize : base_.segmentSize;
+        return base_.totalSize > segmentSize ? base_.totalSize - segmentSize : 0;
+    }
+    void LogReduceCapacityHint() const
+    {
+        UC_ERROR("Try reducing cache_buffer_capacity_gb by one cache_segment_size_gb segment: "
+                 "current capacity({}GB), segment size({}GB), suggested capacity({}GB).",
+                 base_.totalSize >> 30, base_.segmentSize >> 30, SuggestedCapacity() >> 30);
+    }
 };
 
 class LocalBufferStrategy : public BufferStrategy {
@@ -134,21 +156,32 @@ class LocalBufferStrategy : public BufferStrategy {
     LocalMutex bucketLocks_[nHashTableBucket];
     std::unique_ptr<LocalLock[]> nodeLocks_;
     std::unique_ptr<BufferMetaNode[]> meta_;
-    std::shared_ptr<void> data_;
-    std::byte* dataOnDevice_{nullptr};
-    bool registeredMappedHost_{false};
+    struct Segment {
+        size_t nodeBegin{0};
+        size_t nodeCount{0};
+        size_t dataSize{0};
+        std::shared_ptr<void> data;
+        std::byte* dataOnDevice{nullptr};
+        bool registeredMappedHost{false};
+    };
+    std::vector<Segment> segments_;
+    size_t segmentNodeCount_{0};
 
 public:
     LocalBufferStrategy(int32_t deviceId, size_t nodeSize, size_t totalSize, size_t reservedNumber,
-                        bool ioDirect, bool mapHostToDevice)
-        : BufferStrategy(deviceId, nodeSize, totalSize, reservedNumber),
+                        size_t segmentSize, bool ioDirect, bool mapHostToDevice)
+        : BufferStrategy(deviceId, nodeSize, totalSize, reservedNumber, segmentSize),
           ioDirect_(ioDirect),
           mapHostToDevice_(mapHostToDevice)
     {
     }
     ~LocalBufferStrategy() override
     {
-        if (registeredMappedHost_ && data_) { Trans::Buffer::UnregisterHostBuffer(data_.get()); }
+        for (auto& seg : segments_) {
+            if (seg.registeredMappedHost && seg.data) {
+                Trans::Buffer::UnregisterHostBuffer(seg.data.get());
+            }
+        }
     }
     Status Setup() override
     {
@@ -176,28 +209,8 @@ public:
             UC_ERROR("Failed to make buffer on device({}).", deviceId);
             return Status::Error();
         }
-        data_ = ioDirect_ ? buffer->MakeHostBuffer4DirectIo(nodeSize * nNode)
-                          : buffer->MakeHostBuffer(nodeSize * nNode);
-        if (!data_) [[unlikely]] {
-            UC_ERROR("Failed to make pinned({}) for device({}).", nodeSize * nNode, deviceId);
-            return Status::OutOfMemory();
-        }
-        if (mapHostToDevice_) {
-            void* deviceData = nullptr;
-            auto s = Status::OK();
-            if (ioDirect_) {
-                s = Trans::Buffer::GetHostDevicePointer(data_.get(), &deviceData);
-            } else {
-                s = Trans::Buffer::RegisterHostBuffer(data_.get(), nodeSize * nNode, &deviceData);
-                registeredMappedHost_ = s.Success();
-            }
-            if (s.Failure()) [[unlikely]] {
-                UC_ERROR("Failed({}) to map pinned host buffer({}) to device({}).", s,
-                         nodeSize * nNode, deviceId);
-                return s;
-            }
-            dataOnDevice_ = static_cast<std::byte*>(deviceData);
-        }
+        s = SetupSegments(*buffer, deviceId, nNode, nodeSize);
+        if (s.Failure()) [[unlikely]] { return s; }
         for (size_t i = 0; i < nHashTableBucket; i++) { header_.buckets[i] = invalidIndex; }
         for (size_t i = 0; i < nNode; i++) { meta_[i].Init(); }
         header_.freeHead = 0;
@@ -219,14 +232,74 @@ public:
     }
     void* DataAt(size_t iNode) override
     {
-        return ((std::byte*)data_.get()) + header_.nodeSize * iNode;
+        auto& seg = SegmentAt(iNode);
+        return static_cast<std::byte*>(seg.data.get()) +
+               header_.nodeSize * (iNode - seg.nodeBegin);
     }
     void* DeviceDataAt(size_t iNode) override
     {
-        if (dataOnDevice_ == nullptr) { return nullptr; }
-        return dataOnDevice_ + header_.nodeSize * iNode;
+        auto& seg = SegmentAt(iNode);
+        if (seg.dataOnDevice == nullptr) { return nullptr; }
+        return seg.dataOnDevice + header_.nodeSize * (iNode - seg.nodeBegin);
     }
     BufferMetaNode* MetaAt(size_t iNode) override { return meta_.get() + iNode; }
+
+private:
+    static size_t SegmentNodeCount(size_t nNode, size_t nodeSize, size_t segmentSize)
+    {
+        if (segmentSize == 0) { return nNode; }
+        return std::max<size_t>(1, segmentSize / nodeSize);
+    }
+    Status SetupSegments(Trans::Buffer& buffer, int32_t deviceId, size_t nNode, size_t nodeSize)
+    {
+        segmentNodeCount_ = SegmentNodeCount(nNode, nodeSize, base_.segmentSize);
+        const auto segmentCount = (nNode + segmentNodeCount_ - 1) / segmentNodeCount_;
+        for (size_t idx = 0, nodeBegin = 0; nodeBegin < nNode;
+             idx++, nodeBegin += segmentNodeCount_) {
+            const auto nodeCount = std::min(segmentNodeCount_, nNode - nodeBegin);
+            const auto dataSize = nodeSize * nodeCount;
+            Segment seg{nodeBegin, nodeCount, dataSize};
+            seg.data = ioDirect_ ? buffer.MakeHostBuffer4DirectIo(dataSize)
+                                 : buffer.MakeHostBuffer(dataSize);
+            if (!seg.data) [[unlikely]] {
+                UC_ERROR("Failed to make pinned segment({}/{}) begin node({}) size({}) for "
+                         "device({}).",
+                         idx + 1, segmentCount, nodeBegin, dataSize, deviceId);
+                LogReduceCapacityHint();
+                return Status::OutOfMemory();
+            }
+            if (mapHostToDevice_) {
+                void* deviceData = nullptr;
+                auto s = Status::OK();
+                if (ioDirect_) {
+                    s = Trans::Buffer::GetHostDevicePointer(seg.data.get(), &deviceData);
+                } else {
+                    s = Trans::Buffer::RegisterHostBuffer(seg.data.get(), dataSize, &deviceData);
+                    seg.registeredMappedHost = s.Success();
+                }
+                if (s.Failure()) [[unlikely]] {
+                    UC_ERROR("Failed({}) to map pinned host segment({}/{}) begin node({}) "
+                             "size({}) to device({}).",
+                             s, idx + 1, segmentCount, nodeBegin, dataSize, deviceId);
+                    LogReduceCapacityHint();
+                    return s;
+                }
+                seg.dataOnDevice = static_cast<std::byte*>(deviceData);
+            }
+            if (ShouldLogSegmentProgress(idx, segmentCount)) {
+                UC_INFO("Local cache segment ready: index({}/{}), begin node({}), node count({}), "
+                        "size({}), device({}).",
+                        idx + 1, segmentCount, seg.nodeBegin, seg.nodeCount, seg.dataSize,
+                        deviceId);
+            }
+            segments_.push_back(std::move(seg));
+        }
+        return Status::OK();
+    }
+    Segment& SegmentAt(size_t iNode)
+    {
+        return segments_[iNode / segmentNodeCount_];
+    }
 };
 
 class SharedBufferStrategy : public BufferStrategy {
@@ -262,6 +335,9 @@ protected:
         ShareLock lock;
         size_t nNode;
         size_t freeHead;
+        size_t nodeSize;
+        size_t segmentNodeCount;
+        size_t segmentCount;
         size_t buckets[nHashTableBucket];
         ShareMutex bucketLocks[nHashTableBucket];
         ShareLock nodeLocks[0];
@@ -269,14 +345,27 @@ protected:
 
     BufferHeader* header_{nullptr};
     BufferMetaNode* meta_{nullptr};
-    std::byte* data_{nullptr};
-    std::byte* dataOnDevice_{nullptr};
     const std::string& uuid_;
     std::string shmName_;
     size_t nodeSize_{0};
     size_t nNode_{0};
+    size_t segmentNodeCount_{0};
+    size_t segmentCount_{0};
     void* addrress_{nullptr};
     size_t totalSize_{0};
+    bool owner_{false};
+    struct Segment {
+        std::string shmName;
+        void* address{nullptr};
+        std::byte* data{nullptr};
+        std::byte* dataOnDevice{nullptr};
+        size_t mapSize{0};
+        size_t nodeBegin{0};
+        size_t nodeCount{0};
+        size_t dataSize{0};
+        bool registered{false};
+    };
+    std::vector<Segment> segments_;
 
     size_t MetaOffset() const noexcept { return sizeof(BufferHeader) + sizeof(ShareLock) * nNode_; }
     size_t DataOffset() const noexcept
@@ -286,6 +375,34 @@ protected:
         return (size + pageSize - 1) & ~(pageSize - 1);
     }
     size_t DataSize() const noexcept { return nodeSize_ * nNode_; }
+    size_t SegmentNodeCount() const noexcept
+    {
+        if (base_.segmentSize == 0) { return nNode_; }
+        return std::max<size_t>(1, base_.segmentSize / nodeSize_);
+    }
+    std::string SegmentShmName(size_t idx) const
+    {
+        return shmName_ + "_" + std::to_string(idx);
+    }
+    void InitSegments()
+    {
+        segmentNodeCount_ = SegmentNodeCount();
+        segmentCount_ = (nNode_ + segmentNodeCount_ - 1) / segmentNodeCount_;
+        segments_.clear();
+        segments_.reserve(segmentCount_);
+        for (size_t idx = 0; idx < segmentCount_; idx++) {
+            const auto nodeBegin = idx * segmentNodeCount_;
+            const auto nodeCount = std::min(segmentNodeCount_, nNode_ - nodeBegin);
+            const auto dataSize = nodeSize_ * nodeCount;
+            const auto mapSize = idx == 0 ? DataOffset() + dataSize : dataSize;
+            segments_.push_back(Segment{SegmentShmName(idx), nullptr, nullptr, nullptr,
+                                        mapSize, nodeBegin, nodeCount, dataSize, false});
+        }
+    }
+    Segment& SegmentAt(size_t iNode)
+    {
+        return segments_[iNode / segmentNodeCount_];
+    }
     static const std::string& ShmPrefix() noexcept
     {
         static std::string prefix{"uc_shm_cache_"};
@@ -295,6 +412,7 @@ protected:
     {
         namespace fs = std::filesystem;
         std::string_view prefix = ShmPrefix();
+        const auto segmentPrefix = me + "_";
         fs::path shmDir = "/dev/shm";
         if (!fs::exists(shmDir)) { return; }
         const auto now = fs::file_time_type::clock::now();
@@ -303,7 +421,7 @@ protected:
             const auto& path = entry.path();
             const auto& name = path.filename().string();
             if (!entry.is_regular_file() || name.compare(0, prefix.size(), prefix) != 0 ||
-                name == me) {
+                name == me || name.compare(0, segmentPrefix.size(), segmentPrefix) == 0) {
                 continue;
             }
             try {
@@ -345,15 +463,67 @@ protected:
         } while (true);
         return Status::OK();
     }
+    Status MapSegment(size_t idx, bool create)
+    {
+        auto& seg = segments_[idx];
+        PosixShm shmFile{seg.shmName};
+        const auto flags = create
+            ? (PosixShm::OpenFlag::CREATE | PosixShm::OpenFlag::EXCL |
+               PosixShm::OpenFlag::READ_WRITE)
+            : PosixShm::OpenFlag::READ_WRITE;
+        auto s = shmFile.ShmOpen(flags);
+        if (s.Failure()) {
+            UC_ERROR("Failed({}) to open segment file({}) with flags({}).", s, seg.shmName,
+                     flags);
+            return s;
+        }
+        s = MmapShmFile(shmFile, seg.mapSize, seg.address, create);
+        if (s.Failure()) [[unlikely]] { return s; }
+        seg.data = idx == 0 ? static_cast<std::byte*>(seg.address) + DataOffset()
+                            : static_cast<std::byte*>(seg.address);
+        if (idx == 0) { addrress_ = seg.address; }
+        return Status::OK();
+    }
+    Status MapDataSegments(bool create)
+    {
+        const auto segmentCount = segments_.size();
+        for (size_t idx = 1; idx < segments_.size(); idx++) {
+            auto s = MapSegment(idx, create);
+            if (s.Failure()) [[unlikely]] {
+                UC_ERROR("Failed({}) to map shared cache segment({}/{}) begin node({}) size({}).",
+                         s, idx + 1, segmentCount, segments_[idx].nodeBegin,
+                         segments_[idx].dataSize);
+                if (create) { LogReduceCapacityHint(); }
+                return s;
+            }
+            if (ShouldLogSegmentProgress(idx, segmentCount)) {
+                UC_INFO("Shared cache segment mapped: index({}/{}), begin node({}), node "
+                        "count({}), size({}).",
+                        idx + 1, segmentCount, segments_[idx].nodeBegin,
+                        segments_[idx].nodeCount, segments_[idx].dataSize);
+            }
+        }
+        return Status::OK();
+    }
     Status InitShmBuffer(PosixShm& shmFile)
     {
-        auto s = MmapShmFile(shmFile, totalSize_, addrress_);
+        auto& seg0 = segments_[0];
+        auto s = MmapShmFile(shmFile, seg0.mapSize, seg0.address);
         if (s.Failure()) [[unlikely]] { return s; }
+        seg0.data = static_cast<std::byte*>(seg0.address) + DataOffset();
+        addrress_ = seg0.address;
         header_ = static_cast<BufferHeader*>(addrress_);
         meta_ = (BufferMetaNode*)(static_cast<std::byte*>(addrress_) + MetaOffset());
+        header_->magic = 0;
         header_->lock.Init();
         header_->nNode = nNode_;
         header_->freeHead = 0;
+        header_->nodeSize = nodeSize_;
+        header_->segmentNodeCount = segmentNodeCount_;
+        header_->segmentCount = segmentCount_;
+        UC_INFO("Shared cache segment mapped: index(1/{}), begin node({}), node count({}), "
+                "size({}).",
+                segmentCount_, seg0.nodeBegin, seg0.nodeCount, seg0.dataSize);
         for (size_t i = 0; i < nHashTableBucket; i++) {
             header_->buckets[i] = invalidIndex;
             header_->bucketLocks[i].Init();
@@ -362,6 +532,9 @@ protected:
             header_->nodeLocks[i].Init();
             meta_[i].Init();
         }
+        s = MapDataSegments(true);
+        if (s.Failure()) [[unlikely]] { return s; }
+        // Shared-memory readiness is independent of per-device registration.
         header_->magic = sharedBufferMagic;
         return Status::OK();
     }
@@ -372,46 +545,71 @@ protected:
             UC_ERROR("Failed({}) to open file({}).", s, shmFile.ShmName());
             return s;
         }
-        s = MmapShmFile(shmFile, totalSize_, addrress_, false);
+        auto& seg0 = segments_[0];
+        s = MmapShmFile(shmFile, seg0.mapSize, seg0.address, false);
         if (s.Failure()) [[unlikely]] { return s; }
+        seg0.data = static_cast<std::byte*>(seg0.address) + DataOffset();
+        addrress_ = seg0.address;
         header_ = static_cast<BufferHeader*>(addrress_);
         s = WaitShmHeaderReady(header_);
         if (s.Failure()) [[unlikely]] {
             UC_ERROR("Shm file({}) not ready.", shmFile.ShmName());
             return s;
         }
+        if (header_->nNode != nNode_ || header_->nodeSize != nodeSize_ ||
+            header_->segmentNodeCount != segmentNodeCount_ || header_->segmentCount == 0 ||
+            header_->segmentCount > segmentCount_) {
+            return Status::InvalidParam("mismatched shm cache segment layout");
+        }
+        segmentCount_ = header_->segmentCount;
+        segments_.resize(segmentCount_);
         meta_ = (BufferMetaNode*)(static_cast<std::byte*>(addrress_) + MetaOffset());
-        return Status::OK();
+        return MapDataSegments(false);
     }
     Status RegisterBuffer(int32_t deviceId)
     {
-        data_ = static_cast<std::byte*>(addrress_) + DataOffset();
         Trans::Device device;
         auto s = device.Setup(deviceId);
         if (s.Failure()) [[unlikely]] {
             UC_ERROR("Failed({}) to setup device({}).", s, deviceId);
             return s;
         }
-        const auto dataSize = DataSize();
-        s = Trans::Buffer::RegisterHostBuffer((void*)data_, dataSize, (void**)&dataOnDevice_);
-        if (s.Failure()) [[unlikely]] {
-            UC_ERROR("Failed({}) to register buffer({}) to device({}).", s, dataSize, deviceId);
-            return s;
+        const auto segmentCount = segments_.size();
+        for (size_t idx = 0; idx < segmentCount; idx++) {
+            auto& seg = segments_[idx];
+            s = Trans::Buffer::RegisterHostBuffer((void*)seg.data, seg.dataSize,
+                                                  (void**)&seg.dataOnDevice);
+            if (s.Failure()) [[unlikely]] {
+                UC_ERROR("Failed({}) to register shared cache segment({}/{}) begin node({}) "
+                         "size({}) to device({}).",
+                         s, idx + 1, segmentCount, seg.nodeBegin, seg.dataSize, deviceId);
+                LogReduceCapacityHint();
+                return s;
+            }
+            seg.registered = true;
+            if (ShouldLogSegmentProgress(idx, segmentCount)) {
+                UC_INFO("Shared cache segment registered: index({}/{}), begin node({}), node "
+                        "count({}), size({}), device({}).",
+                        idx + 1, segmentCount, seg.nodeBegin, seg.nodeCount, seg.dataSize,
+                        deviceId);
+            }
         }
         return Status::OK();
     }
 
 public:
     SharedBufferStrategy(const std::string& uuid, int32_t deviceId, size_t nodeSize,
-                         size_t totalSize, size_t reservedNumber)
-        : BufferStrategy(deviceId, nodeSize, totalSize, reservedNumber), uuid_(uuid)
+                         size_t totalSize, size_t reservedNumber, size_t segmentSize)
+        : BufferStrategy(deviceId, nodeSize, totalSize, reservedNumber, segmentSize), uuid_(uuid)
     {
     }
     ~SharedBufferStrategy() override
     {
-        if (data_) { Trans::Buffer::UnregisterHostBuffer(data_); }
-        if (addrress_) { PosixShm::MUnmap(addrress_, totalSize_); }
-        PosixShm{shmName_}.ShmUnlink();
+        for (auto& seg : segments_) {
+            if (seg.registered) { Trans::Buffer::UnregisterHostBuffer(seg.data); }
+            if (seg.address) { PosixShm::MUnmap(seg.address, seg.mapSize); }
+            if (owner_) { PosixShm{seg.shmName}.ShmUnlink(); }
+        }
     }
     Status Setup() override
     {
@@ -422,21 +620,24 @@ public:
         shmName_ = ShmPrefix() + uuid;
         nodeSize_ = nodeSize;
         nNode_ = totalSize / nodeSize;
+        InitSegments();
         CleanUpShmFileExceptMe(shmName_);
-        PosixShm shmFile{shmName_};
-        const auto dataOffset = DataOffset();
-        totalSize_ = dataOffset + DataSize();
+        PosixShm shmFile{segments_[0].shmName};
+        totalSize_ = segments_[0].mapSize;
         const auto flags =
             PosixShm::OpenFlag::CREATE | PosixShm::OpenFlag::EXCL | PosixShm::OpenFlag::READ_WRITE;
         auto s = shmFile.ShmOpen(flags);
         if (s.Success()) {
+            owner_ = true;
             s = InitShmBuffer(shmFile);
         } else if (s == Status::DuplicateKey()) {
             s = LoadShmBuffer(shmFile);
         } else {
-            UC_ERROR("Failed({}) to open file({}) with flags({}).", s, shmName_, flags);
+            UC_ERROR("Failed({}) to open file({}) with flags({}).", s, segments_[0].shmName,
+                     flags);
             return s;
         }
+        if (s.Failure()) [[unlikely]] { return s; }
         return RegisterBuffer(deviceId);
     }
     void BucketLock(size_t iBucket) override { header_->bucketLocks[iBucket].Lock(); }
@@ -454,22 +655,30 @@ public:
         header_->lock.Unlock();
         return iNode;
     }
-    void* DataAt(size_t iNode) override { return data_ + nodeSize_ * iNode; }
-    void* DeviceDataAt(size_t iNode) override { return dataOnDevice_ + nodeSize_ * iNode; }
+    void* DataAt(size_t iNode) override
+    {
+        auto& seg = SegmentAt(iNode);
+        return seg.data + nodeSize_ * (iNode - seg.nodeBegin);
+    }
+    void* DeviceDataAt(size_t iNode) override
+    {
+        auto& seg = SegmentAt(iNode);
+        return seg.dataOnDevice + nodeSize_ * (iNode - seg.nodeBegin);
+    }
     BufferMetaNode* MetaAt(size_t iNode) override { return meta_ + iNode; }
 };
 
 class SharedBufferWatcherStrategy : public SharedBufferStrategy {
 public:
     explicit SharedBufferWatcherStrategy(const std::string& uuid)
-        : SharedBufferStrategy(uuid, -1, 0, 0, 0)
+        : SharedBufferStrategy(uuid, -1, 0, 0, 0, 0)
     {
     }
     Status Setup() override
     {
         shmName_ = ShmPrefix() + uuid_;
         CleanUpShmFileExceptMe(shmName_);
-        PosixShm shmFile{shmName_};
+        PosixShm shmFile{SegmentShmName(0)};
         auto s = shmFile.ShmOpen(PosixShm::OpenFlag::READ_WRITE);
         if (s.Failure()) {
             UC_ERROR("Failed({}) to open file({}).", s, shmFile.ShmName());
@@ -486,12 +695,17 @@ public:
             return s;
         }
         nNode_ = header->nNode;
+        nodeSize_ = header->nodeSize;
+        segmentNodeCount_ = header->segmentNodeCount;
+        segmentCount_ = header->segmentCount;
         shmFile.MUnmap(addr, size);
         totalSize_ = DataOffset();
         s = MmapShmFile(shmFile, totalSize_, addrress_, false);
         if (s.Failure()) [[unlikely]] { return s; }
         header_ = static_cast<BufferHeader*>(addrress_);
         meta_ = (BufferMetaNode*)(static_cast<std::byte*>(addrress_) + MetaOffset());
+        segments_.push_back(Segment{SegmentShmName(0), addrress_, nullptr, nullptr,
+                                    totalSize_, 0, 0, 0, false});
         return Status::OK();
     }
     void* DataAt(size_t iNode) override { return nullptr; }
@@ -505,11 +719,12 @@ Status TransBuffer::Setup(const Config& config)
         if (!config.shareBufferEnable) {
             strategy_ = std::make_shared<LocalBufferStrategy>(
                 config.deviceId, config.shardSize, config.bufferCapacity,
-                config.loadExclusiveBufferNumber, config.ioDirect, config.cacheSdmaDirect);
+                config.loadExclusiveBufferNumber, config.cacheSegmentSize, config.ioDirect,
+                config.cacheSdmaDirect);
         } else if (config.deviceId >= 0) {
             strategy_ = std::make_shared<SharedBufferStrategy>(
                 config.uniqueId, config.deviceId, config.shardSize, config.bufferCapacity,
-                config.loadExclusiveBufferNumber);
+                config.loadExclusiveBufferNumber, config.cacheSegmentSize);
         } else {
             strategy_ = std::make_shared<SharedBufferWatcherStrategy>(config.uniqueId);
         }

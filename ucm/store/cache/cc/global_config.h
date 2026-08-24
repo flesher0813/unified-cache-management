@@ -47,6 +47,7 @@ struct Config {
     bool ioDirect{false};
     std::vector<ssize_t> cpuAffinityCores{};
     size_t bufferCapacity{256ULL << 30};
+    size_t cacheSegmentSize{8ULL << 30};
     size_t loadExclusiveBufferNumber{1024};
     bool shareBufferEnable{true};
     size_t waitingQueueDepth{8192};
