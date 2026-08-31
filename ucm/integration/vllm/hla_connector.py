@@ -27,6 +27,7 @@ from vllm.v1.kv_cache_interface import (
 from ucm.integration.vllm.device import create_device
 from ucm.integration.vllm.ucm_connector import (
     KVCacheLayout,
+    KVCacheSegment,
     PendingDumpTask,
     RequestDispatchMeta,
     RequestHasher,
@@ -516,6 +517,136 @@ class HybridLinearAttentionLayout(KVCacheLayout):
                 all_block_ids[:, None] * stride[None, :] + base[None, :]
             )
 
+    @staticmethod
+    def _has_standard_descriptor(raw_tensor: Any) -> bool:
+        return all(
+            hasattr(raw_tensor, name)
+            for name in ("layers", "layer_stride", "block_stride", "offset")
+        )
+
+    def _standard_segments(self, kvcaches) -> dict[str, KVCacheSegment]:
+        """Read per-layer pages from vLLM's standardized tensor descriptors."""
+        descriptors: dict[str, Any] = {}
+        for raw_tensor in self.kv_cache_config.kv_cache_tensors:
+            for layer_name in raw_tensor.layers:
+                if layer_name in descriptors:
+                    raise ValueError(
+                        f"Duplicate standardized KV tensor descriptor: {layer_name}."
+                    )
+                descriptors[layer_name] = raw_tensor
+
+        specs = layer_name_to_kv_cache_spec(self.kv_cache_config)
+        segments: dict[str, KVCacheSegment] = {}
+        for layer_name, kv_layer in kvcaches.items():
+            if not isinstance(kv_layer, torch.Tensor):
+                raise TypeError(
+                    "Standardized HLA KV cache entries must be tensors: "
+                    f"layer={layer_name}, type={type(kv_layer)}."
+                )
+            raw_tensor = descriptors.get(layer_name)
+            if raw_tensor is None:
+                raise ValueError(
+                    f"Missing standardized KV tensor descriptor for {layer_name}."
+                )
+            layer_specs = specs.get(layer_name, [])
+            if len(layer_specs) != 1:
+                raise ValueError(
+                    "Expected one concrete KV cache spec per layer: "
+                    f"layer={layer_name}, count={len(layer_specs)}."
+                )
+            copy_size = int(layer_specs[0].page_size_bytes)
+            block_stride = int(raw_tensor.block_stride)
+            buffer_size = (self.num_blocks - 1) * block_stride + copy_size
+            segments[layer_name] = KVCacheSegment(
+                ptr=int(kv_layer.data_ptr()),
+                copy_size=copy_size,
+                block_stride=block_stride,
+                buffer_size=buffer_size,
+            )
+        return segments
+
+    def _build_standard_layout(self, kvcaches) -> None:
+        """Rebuild ordinary HLA rows from standardized CUDA descriptors."""
+        segments = self._standard_segments(kvcaches)
+        groups: list[tuple[int, Any, list[str]]] = []
+        for group_id, group in enumerate(self.kv_cache_config.kv_cache_groups):
+            names = [name for name in group.layer_names if name in segments]
+            if names:
+                groups.append((group_id, group, names))
+
+        attention_groups = [
+            item
+            for item in groups
+            if not is_mamba_align_kv_cache_spec(item[1].kv_cache_spec)
+        ]
+        mamba_groups = [
+            item
+            for item in groups
+            if is_mamba_align_kv_cache_spec(item[1].kv_cache_spec)
+        ]
+        if not attention_groups or not mamba_groups:
+            raise ValueError(
+                "Standardized HLA layout requires full-attention and "
+                "mamba-align groups."
+            )
+
+        row_count = len(attention_groups[0][2])
+        incompatible_counts = {
+            group_id: len(names)
+            for group_id, _, names in groups
+            if len(names) != row_count
+        }
+        if incompatible_counts:
+            raise ValueError(
+                "Standardized HLA groups must expose the same number of rows: "
+                f"expected={row_count}, actual={incompatible_counts}."
+            )
+
+        page_sizes = {
+            segments[name].copy_size
+            for _, _, names in groups
+            for name in names
+        }
+        if len(page_sizes) != 1:
+            raise ValueError(
+                "Standardized HLA groups must use one physical page size, "
+                f"got {sorted(page_sizes)}."
+            )
+        page_size = page_sizes.pop()
+
+        _, _, canonical_names = attention_groups[0]
+        canonical = [segments[name] for name in canonical_names]
+        self.layer_name_to_row = {}
+        for group_id, _, names in groups:
+            for row_id, (layer_name, segment, expected) in enumerate(
+                zip(names, (segments[name] for name in names), canonical)
+            ):
+                if (
+                    segment.ptr != expected.ptr
+                    or segment.block_stride != expected.block_stride
+                ):
+                    raise ValueError(
+                        "Standardized HLA groups do not alias the same physical "
+                        f"row: group_id={group_id}, row={row_id}, "
+                        f"layer={layer_name}."
+                    )
+                self.layer_name_to_row[layer_name] = row_id
+
+        self._finalize_layout_arrays(
+            [[segment.ptr] for segment in canonical],
+            [[segment.buffer_size] for segment in canonical],
+            [[page_size] for _ in canonical],
+            [[segment.block_stride] for segment in canonical],
+        )
+        logger.info(
+            "Standardized HLA layout: rows=%s, page_size=%s, "
+            "attention_groups=%s, mamba_groups=%s",
+            row_count,
+            page_size,
+            [group_id for group_id, _, _ in attention_groups],
+            [group_id for group_id, _, _ in mamba_groups],
+        )
+
     def extract_block_addrs(
         self, vllm_block_ids: List[int], layer_first: bool = False
     ) -> np.ndarray:
@@ -684,6 +815,19 @@ class HybridLinearAttentionLayout(KVCacheLayout):
         block_stride_lists.append(sizes)
 
     def _build_layout(self, kvcaches):
+        raw_tensors = self.kv_cache_config.kv_cache_tensors
+        if raw_tensors and all(
+            self._has_standard_descriptor(raw_tensor)
+            for raw_tensor in raw_tensors
+        ):
+            if not current_platform.is_cuda_alike():
+                raise ValueError(
+                    "Standardized HLA descriptors are currently supported "
+                    "only on CUDA."
+                )
+            self._build_standard_layout(kvcaches)
+            return
+
         base_ptrs = []
         buffer_size_rows = []
         tensor_size_lists = []
@@ -772,19 +916,22 @@ class UCMHybridLinearAttentionConnector(UCMDirectConnector, SupportsHMA):
         ):
             return False
 
-        layer_to_specs = layer_name_to_kv_cache_spec(kv_cache_config)
-        for raw_tensor in kv_cache_config.kv_cache_tensors:
-            shared_specs = [
-                spec
-                for layer_name in raw_tensor.shared_by
-                for spec in layer_to_specs.get(layer_name, [])
-            ]
-            if any(
-                isinstance(spec, FullAttentionSpec) for spec in shared_specs
-            ) and any(
-                isinstance(spec, MambaSpec) and spec.mamba_cache_mode == "align"
-                for spec in shared_specs
-            ):
+        has_full_attention = False
+        has_mamba_align = False
+        for group in kv_cache_config.kv_cache_groups:
+            group_spec = group.kv_cache_spec
+            specs = (
+                group_spec.kv_cache_specs.values()
+                if isinstance(group_spec, UniformTypeKVCacheSpecs)
+                else (group_spec,)
+            )
+            for spec in specs:
+                has_full_attention |= isinstance(spec, FullAttentionSpec)
+                has_mamba_align |= (
+                    isinstance(spec, MambaSpec)
+                    and spec.mamba_cache_mode == "align"
+                )
+            if has_full_attention and has_mamba_align:
                 return True
 
         return False
