@@ -41,7 +41,7 @@ node --test tests/install-ui.test.cjs
 ## 内容维护
 
 - 英文放在 `docs/en/`，中文使用 `docs/zh/` 下相同路径。新增公开页面登记到 `mkdocs.yml`；图片及脚本使用相对链接。
-- 安装包、镜像及 Chart 坐标只来自当前构建的发布清单；Quickstart 顶部确定环境，正文使用相应的完整制品命令，再完成配置、启动与验证；不另写裸 `pip install uc-manager` 或镜像 `latest`。SGLang 的既有指南暂不接入新清单。
+- 安装包、镜像及 Chart 坐标只来自当前构建的发布清单；Quickstart 顶部确定环境，正文使用相应的完整制品命令，再完成配置、启动与验证；不另写裸 `pip install uc-manager` 或镜像 `latest`。SGLang 也通过同一清单选择器展示当前制品。
 - Quickstart 保留 Docker 启动、设备与目录挂载、UCM 安装、引擎启动及请求验证的完整路径；安装选择器负责制品坐标，不能替代启动命令。迁移操作步骤时保留可到达的对应入口。
 - 参数参考以实际配置读取位置为依据。任务页引用参考，避免重复维护默认值。
 - 新页面必须有对读者有效的内容。内部待办留在任务或 Issue 中；Model Tour 保留 GLM、Qwen、DeepSeek、MiniMax、Kimi 五个家族；内容较少时保留栏目供后续补充。

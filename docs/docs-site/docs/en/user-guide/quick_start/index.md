@@ -434,10 +434,10 @@ This guide explains how to install UCM with SGLang on CUDA.
 
 ##### SGLang image {#sglang-sglang-image}
 
-The current [UCM Release](https://github.com/ModelEngine-Group/unified-cache-management/releases) does not provide a SGLang image. Use the official SGLang image below, then install UCM from PyPI inside the container.
+Select the SGLang image and UCM package from the release manifest in the Quickstart selector above. For a local or unreleased build, replace `<sglang-image>` with the corresponding published image.
 
 ```bash
-docker pull lmsysorg/sglang:v0.5.9
+docker pull <sglang-image>
 ```
 
 Then run your container using following command.
@@ -450,7 +450,7 @@ docker run --rm \
     -v "<path_to_your_models>:/home/model" \
     -v "<path_to_your_storage>:/home/storage" \
     --name "<name_of_your_container>" \
-    -it lmsysorg/sglang:v0.5.9
+    -it <sglang-image>
 ```
 
 To build the UCM Docker image from source code, see [Building and Installing UCM from Source](../../developer-guide/build_from_source.md).
@@ -464,7 +464,7 @@ export PLATFORM=cuda
 pip install uc-manager
 ```
 
-Prepare SGLang 0.5.9 first. PyPI currently provides UCM 0.5.0 as a source package, which requires a CUDA build environment.
+Prepare the SGLang version selected above first. The selected UCM package is shown in the release manifest; source builds may require a CUDA build environment.
 
 Create the configuration file below after installation. For a repository build, see [Build from source](../../developer-guide/build_from_source.md).
 

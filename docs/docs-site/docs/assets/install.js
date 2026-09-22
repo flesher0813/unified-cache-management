@@ -64,7 +64,7 @@
   }
 
   function selectableProduct(artifact) {
-    return ["vllm", "vllm-ascend"].includes(artifact.product) &&
+    return ["vllm", "vllm-ascend", "sglang"].includes(artifact.product) &&
       ![artifact.accelerator.variant, artifact.accelerator.soc_version].some(function (value) {
         return /(^|[-_.])a5($|[-_.])/i.test(String(value));
       });
@@ -90,7 +90,7 @@
     // Schema 9 family IDs retain the product prefix and full upstream runtime tag.
     if (!repository || !image.id.startsWith(prefix)) return null;
     var tag = image.id.slice(prefix.length);
-    if (!/^(v\d|nightly-releases-v\d)/.test(tag)) return null;
+    if (!/^(v\d|nightly-releases-v\d|nightly-|main-)/.test(tag)) return null;
     return repository + ":" + tag;
   }
 

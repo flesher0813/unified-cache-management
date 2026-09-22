@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import re
+from datetime import datetime
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -96,7 +97,21 @@ def _string(mapping: Mapping[str, object], key: str, context: str) -> str:
     return value.strip()
 
 
-def _parsed_runtime_tag(product_id: str, tag: str) -> dict[str, object] | None:
+def _parsed_runtime_tag(
+    product_id: str, tag: str, *, created_at: datetime | None = None
+) -> dict[str, object] | None:
+    if product_id == "sglang":
+        main = re.fullmatch(r"main-(?P<cann>cann[0-9]+\.[0-9]+\.[0-9]+)-(?P<soc>910b|a3)", tag)
+        if main is not None and created_at is not None:
+            stamp = created_at.strftime("%Y%m%d%H%M%S")
+            return {
+                "tag": tag,
+                "version": Version(f"0.0.0.dev{stamp}"),
+                "version_text": f"0.0.0.dev{stamp}",
+                "channel": "nightly",
+                "suffix": f"-{main.group('cann')}-{main.group('soc')}",
+                "tokens": [main.group("cann"), main.group("soc")],
+            }
     nightly = _NIGHTLY_TAG.fullmatch(tag) if product_id == "vllm-ascend" else None
     formal = _FORMAL_TAG.fullmatch(tag)
     match = nightly or formal
@@ -332,6 +347,11 @@ def resolve_runtime_candidates(
         repository_tags = registry.repository_tags(
             repository, tag_fixture=tag_fixture, tag_loader=tag_loader
         )
+        created_by_tag: dict[str, datetime] = {}
+        if product_id == "sglang" and tag_fixture is None and tag_loader is None:
+            for tag in repository_tags:
+                if tag.startswith("main-cann"):
+                    created_by_tag[tag] = registry.created_at(repository, tag)
         if pr_default:
             selected = [
                 {
@@ -340,7 +360,9 @@ def resolve_runtime_candidates(
                     "channel": str(item["channel"]),
                 }
                 for tag in repository_tags
-                if (item := _parsed_runtime_tag(product_id, tag)) is not None
+                if (item := _parsed_runtime_tag(
+                    product_id, tag, created_at=created_by_tag.get(tag)
+                )) is not None
                 and _runtime_variant(product_id, item) not in excluded
             ]
         else:
@@ -349,6 +371,23 @@ def resolve_runtime_candidates(
                 repository_tags,
                 excluded_variants=excluded,
             )
+            if product_id == "sglang":
+                main_candidates = [
+                    item for tag in repository_tags
+                    if (item := _parsed_runtime_tag(
+                        product_id, tag, created_at=created_by_tag.get(tag)
+                    )) is not None
+                    and item["channel"] == "nightly"
+                    and _runtime_variant(product_id, item) not in excluded
+                ]
+                if main_candidates:
+                    newest = max(main_candidates, key=lambda item: item["version"])
+                    if newest["tag"] not in {item["runtime_tag"] for item in selected}:
+                        selected.append({
+                            "runtime_tag": str(newest["tag"]),
+                            "version": str(newest["version_text"]),
+                            "channel": "nightly",
+                        })
         if not selected:
             raise ValueError(
                 f"{product_id}: no Runtime Registry tags satisfy the selection windows"
