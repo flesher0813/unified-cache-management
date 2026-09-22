@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import copy
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -351,7 +351,13 @@ def resolve_runtime_candidates(
         if product_id == "sglang" and tag_fixture is None and tag_loader is None:
             for tag in repository_tags:
                 if tag.startswith("main-cann"):
-                    created_by_tag[tag] = registry.created_at(repository, tag)
+                    try:
+                        created_by_tag[tag] = registry.created_at(repository, tag)
+                    except ValueError:
+                        # Some registries do not expose config metadata for a tag.
+                        # Keep SGLang release generation alive with a timestamp from
+                        # this run; formal tags and the other products are unchanged.
+                        created_by_tag[tag] = datetime.now(timezone.utc)
         if pr_default:
             selected = [
                 {
