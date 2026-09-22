@@ -219,6 +219,7 @@ def _select_runtime_tags(
     tags: Sequence[str],
     *,
     excluded_variants: Sequence[str] = (),
+    created_by_tag: Mapping[str, datetime] | None = None,
 ) -> list[dict[str, str]]:
     """Resolve version.ini ranges to one published Runtime version per selector."""
 
@@ -230,7 +231,9 @@ def _select_runtime_tags(
     parsed_by_tag = {
         tag: parsed
         for tag in available_tags
-        if (parsed := _parsed_runtime_tag(product_id, tag)) is not None
+        if (parsed := _parsed_runtime_tag(
+            product_id, tag, created_at=(created_by_tag or {}).get(tag)
+        )) is not None
     }
     selected: list[dict[str, str]] = []
     selected_tags: set[str] = set()
@@ -376,6 +379,7 @@ def resolve_runtime_candidates(
                 product,
                 repository_tags,
                 excluded_variants=excluded,
+                created_by_tag=created_by_tag,
             )
             if product_id == "sglang":
                 main_candidates = [
