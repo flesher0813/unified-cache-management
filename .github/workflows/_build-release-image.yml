@@ -219,21 +219,10 @@ jobs:
               printf "Runtime OS: actual=%s:%s planned=%s:%s\n" \
                 "${ID}" "${VERSION_ID}" "${EXPECTED_OS_ID}" "${EXPECTED_OS_VERSION}"
               python3 -c "import hashlib, os, pathlib; path=pathlib.Path(\"/workspace/ucm_config_example.yaml\"); actual=hashlib.sha256(path.read_bytes()).hexdigest(); assert actual == os.environ[\"EXPECTED_UCM_CONFIG_SHA256\"], actual"
-              source /usr/local/Ascend/ascend-toolkit/set_env.sh 2>/dev/null || true
-              source /usr/local/Ascend/nnal/atb/set_env.sh 2>/dev/null || true
-              ascend_devlib="/usr/local/Ascend/ascend-toolkit/latest/$(uname -i)-linux/devlib"
-              if [ ! -e "${ascend_devlib}/libascend_hal.so" ]; then
-                hal_path="$(find /usr/local/Ascend -type f \
-                  -path '*/devlib/linux/*/libascend_hal.so' -print -quit 2>/dev/null || true)"
-                if [ -n "${hal_path}" ]; then
-                  ascend_devlib="${hal_path%/*}"
-                else
-                  ascend_devlib=""
-                fi
-              fi
-              test -z "${ascend_devlib}" || export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+${LD_LIBRARY_PATH}:}${ascend_devlib}"
-              test -z "${ascend_devlib}" || echo "Ascend devlib: ${ascend_devlib}"
+              echo "[UCM] before validate_wheel_runtime.py"
+              echo "[UCM] LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
               python3 /tmp/validate_wheel_runtime.py
+              echo "[UCM] after validate_wheel_runtime.py"
               if [ "${EXPECTED_PRODUCT}" = sglang ]; then
                 python3 -c "import sglang; from ucm.integration.sglang.unifiedcache_store import UnifiedCacheStore"
               fi
