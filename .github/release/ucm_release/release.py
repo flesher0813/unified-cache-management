@@ -196,6 +196,9 @@ def _validate_wheel_result_contract(result: dict[str, Any], result_path: Path) -
     closure = wheel_audit.validate_external_library_closure(
         report_text,
         expected_patterns=excluded,
+        deferred_sonames=wheel_audit.deferred_policy_for_distribution(
+            str(result.get("distribution", ""))
+        ),
     )
     if external_roots != closure["external_library_roots"]:
         raise ValueError(f"{context} external roots do not match auditwheel")
