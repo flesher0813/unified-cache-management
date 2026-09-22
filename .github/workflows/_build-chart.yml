@@ -66,18 +66,20 @@ jobs:
             --plan "${plan}" --output "${source}" >out/chart-preparation.json
           cat out/chart-preparation.json
           helm lint "${source}"
-          while IFS=$'\t' read -r product variant repository tag; do
+          while IFS=$'\t' read -r product variant repository tag accelerator_runtime; do
             values="$(jq -er --arg product "${product}" \
               '.chart.smoke_values[$product]' "${plan}")"
             expected=huawei.com/Ascend910
-            [ "${product}" = vllm ] && expected=nvidia.com/gpu
+            if [[ "${accelerator_runtime}" == cuda-* ]]; then
+              expected=nvidia.com/gpu
+            fi
             test -n "${values}"
             helm template "ucm-${variant}" "${source}" --values "${values}" \
               --set-string "images.image=${repository}:${tag}" \
               >"out/rendered/${product}-${variant}.yaml"
             grep -Fq "${repository}:${tag}" "out/rendered/${product}-${variant}.yaml"
             grep -Fq "${expected}" "out/rendered/${product}-${variant}.yaml"
-          done < <(jq -r '.families[] | [.product_id,.variant,.target_repository,.target_tag] | @tsv' "${plan}")
+          done < <(jq -r '.families[] | select(.product_id == "vllm" or .product_id == "vllm-ascend") | [.product_id,.variant,.target_repository,.target_tag,.runtime.accelerator_runtime] | @tsv' "${plan}")
           helm package "${source}" \
             --version "${chart_version}" \
             --app-version "${app_version}" \
