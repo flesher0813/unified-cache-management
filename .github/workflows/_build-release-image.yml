@@ -192,6 +192,7 @@ jobs:
             -e EXPECTED_RUNTIME_REQUIREMENTS="${runtime_requirements}" \
             -e EXPECTED_UCM_CONFIG_SHA256="${config_sha256}" \
             -e EXPECTED_PRODUCT="$(jq -r '.runtime.product_id' out/image-task.json)" \
+            -e EXPECTED_RUNTIME_TAG="$(jq -r '.runtime.runtime_tag' out/image-task.json)" \
             -v "${PWD}/.github/release/validate_wheel_runtime.py:/tmp/validate_wheel_runtime.py:ro" \
             "${local_tag}" -c '
               set -eu
@@ -224,6 +225,12 @@ jobs:
               python3 /tmp/validate_wheel_runtime.py
               echo "[UCM] after validate_wheel_runtime.py"
               if [ "${EXPECTED_PRODUCT}" = sglang ]; then
+                # Official SGLang main CANN images do not ship the device-driver
+                # library. Avoid torch auto-loading torch_npu during the import
+                # smoke test; runtime deployment still supplies the driver.
+                if printf %s "${EXPECTED_RUNTIME_TAG}" | grep -q '^main-cann'; then
+                  export TORCH_DEVICE_BACKEND_AUTOLOAD=0
+                fi
                 python3 -c "import sglang; from ucm.integration.sglang.unifiedcache_store import UnifiedCacheStore"
               fi
             '
