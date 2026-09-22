@@ -405,7 +405,9 @@ def resolve_runtime_candidates(
         product_runtime_count = len(runtimes)
         for item in selected:
             tag = item["runtime_tag"]
-            parsed = _parsed_runtime_tag(product_id, tag)
+            parsed = _parsed_runtime_tag(
+                product_id, tag, created_at=created_by_tag.get(tag)
+            )
             tokens = set(parsed["tokens"]) if parsed is not None else set()
             if product_id == "vllm-ascend" and "a5" in tokens:
                 backend = "cann-a5"
@@ -519,6 +521,18 @@ def validate_runtime_candidates(value: object) -> dict[str, object]:
         product_id = _string(item, "product_id", reference)
         runtime_tag = _string(item, "runtime_tag", reference)
         parsed = _parsed_runtime_tag(product_id, runtime_tag)
+        if (
+            product_id == "sglang"
+            and re.fullmatch(
+                r"main-cann[0-9]+\.[0-9]+\.[0-9]+-(?:910b|a3)", runtime_tag
+            )
+            and str(item.get("version", "")).startswith("0.0.0.dev")
+            and item.get("channel") == "nightly"
+        ):
+            parsed = {
+                "version_text": str(item["version"]),
+                "channel": "nightly",
+            }
         if parsed is None:
             raise ValueError(f"{reference}: Runtime tag does not match product grammar")
         if item.get("version") != parsed["version_text"]:
