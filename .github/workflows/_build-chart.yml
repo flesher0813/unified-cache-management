@@ -65,7 +65,9 @@ jobs:
           PYTHONPATH=.github/release python -m ucm_release chart prepare \
             --plan "${plan}" --output "${source}" >out/chart-preparation.json
           cat out/chart-preparation.json
-          helm lint "${source}"
+          default_image="$(jq -er '.image' out/chart-preparation.json)"
+          test -n "${default_image}"
+          helm lint "${source}" --set-string "images.image=${default_image}"
           while IFS=$'\t' read -r product variant repository tag; do
             values="$(jq -er --arg product "${product}" \
               '.chart.smoke_values[$product]' "${plan}")"
@@ -87,10 +89,10 @@ jobs:
           tar -xOf "${chart_package}" "${chart_name}/values.yaml" \
             >out/packaged-values.yaml
           cmp "${source}/values.yaml" out/packaged-values.yaml
-          default_image="$(jq -r '.image' out/chart-preparation.json)"
           if [ -n "${default_image}" ]; then
             helm template ucm-default "${chart_package}" \
               --values "$(jq -r '.chart.smoke_values.vllm' "${plan}")" \
+              --set-string "images.image=${default_image}" \
               >out/rendered/default.yaml
             grep -Fq "${default_image}" out/rendered/default.yaml
           fi
