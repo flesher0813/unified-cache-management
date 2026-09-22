@@ -163,6 +163,7 @@ def _auditwheel_result(
     architecture: str,
     target_platform: str,
     expected_external_patterns: list[str],
+    distribution: str,
     report_path: Path | None,
 ) -> dict[str, Any]:
     report = report_path or wheel_path.with_name(AUDITWHEEL_REPORT)
@@ -222,7 +223,7 @@ def _auditwheel_result(
         expected_patterns=expected_external_patterns,
     )
     policy_deferred = wheel_audit.deferred_policy_for_distribution(
-        str(task["dist_name"])
+        distribution
     )
     print(
         "[UCM] raw external library roots: "
@@ -327,6 +328,7 @@ def record_wheel_result(
             architecture,
             target_platform,
             sorted(str(item) for item in task["external_runtime_exclude_patterns"]),
+            str(task["dist_name"]),
             auditwheel_report_path,
         )
     )
