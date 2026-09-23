@@ -218,41 +218,13 @@ def _auditwheel_result(
             int(part) for part in value.removeprefix("GLIBC_").split(".")
         ),
     )
-    raw_external_closure = wheel_audit.validate_external_library_closure(
-        text,
-        expected_patterns=expected_external_patterns,
-    )
     policy_deferred = wheel_audit.deferred_policy_for_distribution(
         distribution
     )
-    print(
-        "[UCM] raw external library roots: "
-        f"{raw_external_closure['external_library_roots']}"
-    )
-    print(
-        "[UCM] raw external libraries: "
-        f"{raw_external_closure['external_libraries']}"
-    )
-    print(
-        "[UCM] raw deferred external libraries: "
-        f"{raw_external_closure['deferred_external_libraries']}"
-    )
-    print(f"[UCM] applied deferred policy: {sorted(policy_deferred)}")
-
     external_closure = wheel_audit.validate_external_library_closure(
         text,
         expected_patterns=expected_external_patterns,
         deferred_sonames=policy_deferred,
-    )
-    print(f"[UCM] external libraries: {external_closure['external_libraries']}")
-    print(f"[UCM] external library roots: {external_closure['external_library_roots']}")
-    print(
-        "[UCM] deferred external libraries: "
-        f"{external_closure['deferred_external_libraries']}"
-    )
-    print(
-        "[UCM] libascend_hal.so policy: "
-        f"{'deferred' if 'libascend_hal.so' in external_closure['deferred_external_libraries'] else 'not deferred'}"
     )
 
     return {

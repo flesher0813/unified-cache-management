@@ -95,12 +95,6 @@ def validate_runtime(
     if not members:
         raise RuntimeError("installed UCM backend contains no native members")
 
-    print("[UCM] native members:")
-    for member in members:
-        print(f"[UCM]   {member}")
-    drampool_members = [member for member in members if member.name == "drampool"]
-    print(f"[UCM] drampool present: {bool(drampool_members)}")
-
     resolved: dict[str, set[str]] = {}
     missing: set[str] = set()
     deferred = deferred or set()
@@ -114,10 +108,6 @@ def validate_runtime(
         )
         output = completed.stdout + completed.stderr
         member_missing = parse_ldd_missing(output)
-        print(f"[UCM] ldd {member} (exit={completed.returncode}):")
-        print(output.rstrip())
-        if member_missing:
-            print(f"[UCM] missing for {member.name}: {sorted(member_missing)}")
         if completed.returncode != 0 or member_missing - deferred:
             raise RuntimeError(
                 f"native dependency resolution failed for {member}:\n{output}"
@@ -242,18 +232,6 @@ def main() -> int:
     package_paths = getattr(package, "__path__", None)
     if not package_paths:
         raise RuntimeError("installed UCM backend package cannot be located")
-    all_files = backend.files or []
-    native_paths = {path for path in distribution_native_members(backend)}
-    skipped_files = [
-        str(file)
-        for file in all_files
-        if Path(backend.locate_file(file)).resolve() not in native_paths
-    ]
-    print(f"[UCM] package files: {len(all_files)}")
-    print(f"[UCM] native files checked by ldd: {len(native_paths)}")
-    print(f"[UCM] non-ELF files skipped: {len(skipped_files)}")
-    for file in skipped_files:
-        print(f"[UCM] skipped (non-ELF): {file}")
     validate_runtime(
         Path(next(iter(package_paths))),
         sorted(expected),

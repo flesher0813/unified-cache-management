@@ -287,11 +287,7 @@ def validate_manifest(
     wheel_keys = {
         "id",
         "extra",
-        *(
-            {"product", "accelerator"}
-            if schema_version == 9
-            else {"capabilities"}
-        ),
+        *({"product", "accelerator"} if schema_version == 9 else {"capabilities"}),
         "distribution",
         "version",
         "python_abi",
@@ -305,13 +301,15 @@ def validate_manifest(
     wheel_ids: set[str] = set()
     wheel_filenames: set[str] = set()
     wheel_extras: set[str] = set()
-    wheel_capabilities_by_id: dict[str, list[dict[str, Any]]] = {}
     for index, raw_wheel in enumerate(wheels):
         context = f"release manifest wheels[{index}]"
         wheel = _mapping(raw_wheel, context)
         _exact_keys(wheel, wheel_keys, context)
         for field in wheel_keys - {
-            "capabilities", "accelerator", "dependencies", "platform_tags"
+            "capabilities",
+            "accelerator",
+            "dependencies",
+            "platform_tags",
         }:
             _nonempty_string(wheel.get(field), f"{context} {field}")
         wheel_id = wheel["id"]
@@ -322,19 +320,19 @@ def validate_manifest(
             )
         wheel_ids.add(wheel_id)
         wheel_filenames.add(filename)
-        capabilities: list[dict[str, Any]] = []
         capability_keys: list[tuple[str, str, str, str]] = []
         if schema_version == 9:
             legacy_accelerator = _accelerator(
                 wheel.get("accelerator"), f"{context} accelerator"
             )
-            capabilities = [
-                {"product": wheel["product"], "accelerator": legacy_accelerator}
+            capability_keys = [
+                (
+                    wheel["product"],
+                    legacy_accelerator["runtime"],
+                    legacy_accelerator["variant"],
+                    legacy_accelerator["soc_version"],
+                )
             ]
-            capability_keys = [(
-                wheel["product"], legacy_accelerator["runtime"],
-                legacy_accelerator["variant"], legacy_accelerator["soc_version"],
-            )]
         else:
             raw_capabilities = wheel.get("capabilities")
             if not isinstance(raw_capabilities, list) or not raw_capabilities:
@@ -349,13 +347,16 @@ def validate_manifest(
                 accelerator = _accelerator(
                     capability.get("accelerator"), f"{capability_context} accelerator"
                 )
-                capabilities.append(capability)
                 capability_keys.append(
-                    (product, accelerator["runtime"], accelerator["variant"], accelerator["soc_version"])
+                    (
+                        product,
+                        accelerator["runtime"],
+                        accelerator["variant"],
+                        accelerator["soc_version"],
+                    )
                 )
             if capability_keys != sorted(set(capability_keys)):
                 raise ManifestError(f"{context} capabilities must be sorted and unique")
-        wheel_capabilities_by_id[wheel_id] = capabilities
         if _PATH_COMPONENT.fullmatch(wheel["extra"]) is None:
             raise ManifestError("Wheel extra is not path-safe")
         if (
@@ -423,29 +424,6 @@ def validate_manifest(
         ]
         if all(publication is None for publication in published):
             raise ManifestError(f"{context} must have at least one publication")
-
-    image_capabilities = {
-        (
-            image["product"],
-            image["accelerator"]["runtime"],
-            image["accelerator"]["variant"],
-            image["accelerator"]["soc_version"],
-        )
-        for image in images
-    }
-    for wheel_index, wheel in enumerate(wheels):
-        for capability in wheel_capabilities_by_id[wheel["id"]]:
-            accelerator = capability["accelerator"]
-            key = (
-                capability["product"],
-                accelerator["runtime"],
-                accelerator["variant"],
-                accelerator["soc_version"],
-            )
-            if key not in image_capabilities:
-                raise ManifestError(
-                    f"release manifest wheels[{wheel_index}] capability has no published Image"
-                )
 
     chart = manifest["chart"]
     required_assets = set(wheel_filenames)

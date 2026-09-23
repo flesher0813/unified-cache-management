@@ -930,11 +930,7 @@ jobs:
               . /tmp/ucm-wheel-venv/bin/activate
               python -m pip install --disable-pip-version-check --no-cache-dir \
                 --index-url https://pypi.org/simple "${UCM_WHEEL}"
-              echo "[UCM] before validate_wheel_runtime.py"
-              echo "[UCM] PLATFORM=${PLATFORM}"
-              echo "[UCM] LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
               python /tmp/validate_wheel_runtime.py
-              echo "[UCM] after validate_wheel_runtime.py"
             '
 
   package-chart:
@@ -1505,11 +1501,7 @@ jobs:
               python /tmp/verify_pypi_install_report.py --report /tmp/install-report.json \
                 --receipt /tmp/pypi-receipt.json --project "${UCM_META_DISTRIBUTION}" \
                 --project "${EXPECTED_BACKEND_DISTRIBUTION}" --project "${UCM_TOOLKIT_DISTRIBUTION}"
-              echo "[UCM] before validate_wheel_runtime.py (PyPI install)"
-              echo "[UCM] PLATFORM=${PLATFORM}"
-              echo "[UCM] LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
               python /tmp/validate_wheel_runtime.py
-              echo "[UCM] after validate_wheel_runtime.py (PyPI install)"
               python -I /tmp/smoke_installed.py --distribution "${UCM_TOOLKIT_DISTRIBUTION}" --version "${UCM_VERSION}"
             '
 

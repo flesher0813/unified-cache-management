@@ -224,10 +224,7 @@ jobs:
               printf "Runtime OS: actual=%s:%s planned=%s:%s\n" \
                 "${ID}" "${VERSION_ID}" "${EXPECTED_OS_ID}" "${EXPECTED_OS_VERSION}"
               python3 -c "import hashlib, os, pathlib; path=pathlib.Path(\"/workspace/ucm_config_example.yaml\"); actual=hashlib.sha256(path.read_bytes()).hexdigest(); assert actual == os.environ[\"EXPECTED_UCM_CONFIG_SHA256\"], actual"
-              echo "[UCM] before validate_wheel_runtime.py"
-              echo "[UCM] LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
               python3 /tmp/validate_wheel_runtime.py
-              echo "[UCM] after validate_wheel_runtime.py"
             '
       - name: Publish verified Profile members and record digests
         env:
