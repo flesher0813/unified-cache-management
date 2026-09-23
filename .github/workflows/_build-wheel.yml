@@ -178,7 +178,7 @@ jobs:
           test -n "${wheel}"
           PYTHONPATH=.github/release python -m ucm_release wheel record-result \
             --task out/wheel-task.json --wheel "${wheel}" \
-            --output out/wheel/wheel-result.json >/dev/null
+            --output out/wheel/wheel-result.json
           echo "[UCM] wheel task:"; jq -c '{id,dist_name,backend,runtime_variant,cpu_arch,python_version,python_abi,external_runtime_exclude_patterns}' out/wheel-task.json
           echo "[UCM] wheel result audit metadata:"; jq -c '{external_libraries,external_library_roots,deferred_external_libraries}' out/wheel/wheel-result.json
           echo "[UCM] builder environment:"; printf 'PLATFORM=%s LD_LIBRARY_PATH=%s\n' "${PLATFORM:-<unset>}" "${LD_LIBRARY_PATH:-<unset>}"
