@@ -570,6 +570,11 @@ def test_release_image_retries_each_enabled_profile_member_after_verification() 
         for step in steps
         if step.get("name") == "Verify Runtime glibc, Python, OS, and UCM import"
     )
+    reclaim = next(
+        step
+        for step in steps
+        if step.get("name") == "Reclaim BuildKit cache before runtime verification"
+    )
     publish = next(
         step
         for step in steps
@@ -578,9 +583,15 @@ def test_release_image_retries_each_enabled_profile_member_after_verification() 
 
     assert (
         step_names.index(build["name"])
+        < step_names.index(reclaim["name"])
         < step_names.index(verify["name"])
         < step_names.index(publish["name"])
     )
+    disk_cleanup = next(
+        step for step in steps if step.get("uses") == "jlumbroso/free-disk-space@v1.3.1"
+    )
+    assert disk_cleanup["with"]["large-packages"] is True
+    assert "docker buildx prune --all --force" in reclaim["run"]
     assert "publish_member()" in publish["run"]
     assert "publish_channel()" in publish["run"]
     assert "for attempt in 1 2 3" in publish["run"]
