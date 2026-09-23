@@ -26,7 +26,7 @@ python tools/site.py validate
 python tools/site.py build --lang en --strict
 python tools/site.py build --lang zh --strict
 
-# 从指定仓库选择真实安装清单，或者传入本地已验证的 Schema 9 文件
+# 从指定仓库选择真实安装清单，或者传入本地已验证的发布清单
 python tools/site.py build --lang en --strict --repository OWNER/REPO
 python tools/site.py build --lang zh --strict --manifest /path/to/release-manifest.json
 
@@ -67,11 +67,11 @@ node --test tests/install-ui.test.cjs
 
 | 构建类型 | 清单来源 |
 | --- | --- |
-| Tag / Stable | 同仓库、对应 Git 标签的完整 Schema 9 Release；支持正式版和 RC |
-| Latest | 优先使用同仓库最高版本、已完成且具有有效 Schema 9 清单的 Stable Release；没有合格正式版时，使用最高版本的已完成预发布 Release |
+| Tag / Stable | 同仓库、对应 Git 标签的完整发布清单；支持正式版和 RC |
+| Latest | 优先使用同仓库最高版本、已完成且具有有效发布清单的 Stable Release；没有合格正式版时，使用最高版本的已完成预发布 Release |
 | 没有合格 Release | 页面明确显示安装数据不可用，提供源码构建入口 |
 
-公开清单的生成和校验由 `.github/release/ucm_release/manifest.py` 统一负责，使用 Schema 9，新增可选 `toolkit` 制品字段；旧清单没有该字段时仍可读取。枚举时跳过不支持的格式；精确指定不支持的 Release 时直接报错，不作为待发布重试。已有清单损坏、标签/仓库不匹配、文件集合或下载 URL 与 Release 不一致时构建失败。Latest 页面显示实际安装制品的版本，避免把开发文档版本当作发布版本。
+公开清单的生成和校验由 `.github/release/ucm_release/manifest.py` 统一负责。Schema 10 支持一个 Wheel 声明多个 Runtime 能力；仍兼容已发布的 Schema 9 清单。枚举时跳过不支持的格式；精确指定不支持的 Release 时直接报错，不作为待发布重试。已有清单损坏、标签/仓库不匹配、文件集合或下载 URL 与 Release 不一致时构建失败。Latest 页面显示实际安装制品的版本，避免把开发文档版本当作发布版本。
 
 RTD 可能在 Tag 推送时先于产物完成启动构建；此时返回 RTD 的取消码 `183`，不发布不完整页面。Release 流水线完成清单上传、回读及保留策略后，再触发中英文项目的对应 Tag 和 Latest，等待构建成功、核对源码 SHA 并回读公开页面及清单；仅在 RTD 当前 active Stable 对应该 Tag 时重建 Stable，重建旧标签不会回退别名。
 
@@ -101,7 +101,7 @@ python tools/check_bilingual_docs.py
 4. 验证中英文文件门控，将 `Docs · Bilingual files` 设置为目标分支的必需状态检查。
 5. Fork 验收后，通过官方开发分支集成切换 `ucm` 项目；英文父项目仍使用现有 `ucm`，关联中文项目。新内容只维护 `docs/docs-site`。
 6. GitHub Repository Variables 设置 `RTD_PROJECT_EN`、`RTD_PROJECT_ZH`，Repository Secret 设置 `RTD_API_TOKEN`。项目仓库必须与当前发布仓库一致。官方 Latest 和 Stable/Prerelease 发布必须配置两个项目和 Token。Fork 三项均未配置时跳过 RTD 发布；配置齐全后执行文档发布及验证，只配置部分参数会在触发 RTD 构建前失败。
-7. 官方先切换 Latest。首个包含新配置、完整 Schema 9 Release 且 RTD Tag 构建通过后启用 Stable。旧 Git 标签仍按原配置构建，不改写历史标签。
+7. 官方先切换 Latest。首个包含新配置、完整发布清单且 RTD Tag 构建通过后启用 Stable。旧 Git 标签仍按原配置构建，不改写历史标签。
 8. 验收通过后停止新 Pages 发布，保留原 `gh-pages` 内容及自定义域名，尤其历史下载索引；本轮不修改 DNS。若正式切换失败，恢复上一版 RTD 配置即可继续旧站构建。
 
 RTD 管理和 API Token 通过对应后台配置，不能写入源码或日志。
