@@ -186,6 +186,12 @@ def _runtime_variant(product_id: str, parsed: Mapping[str, object]) -> str:
     raise ValueError(f"unsupported runtime product {product_id!r}")
 
 
+def _is_sglang_runtime_variant(product_id: str, parsed: Mapping[str, object]) -> bool:
+    """SGLang publishes CUDA ``-runtime`` tags, which are not UCM build inputs."""
+
+    return product_id == "sglang" and "runtime" in set(parsed.get("tokens", ()))
+
+
 def _version_is_in_selector(version: Version, selector: Version) -> bool:
     return version.release[: len(selector.release)] == selector.release
 
@@ -373,14 +379,22 @@ def resolve_runtime_candidates(
                     product_id, tag, created_at=created_by_tag.get(tag)
                 )) is not None
                 and _runtime_variant(product_id, item) not in excluded
+                and not _is_sglang_runtime_variant(product_id, item)
             ]
         else:
             selected = _select_runtime_tags(
                 product,
                 repository_tags,
-                excluded_variants=excluded,
-                created_by_tag=created_by_tag,
-            )
+                    excluded_variants=excluded,
+                    created_by_tag=created_by_tag,
+                )
+            selected = [
+                item for item in selected
+                if not (
+                    product_id == "sglang"
+                    and item.get("runtime_tag", "").endswith("-runtime")
+                )
+            ]
             if product_id == "sglang":
                 main_candidates = [
                     item for tag in repository_tags
@@ -391,13 +405,22 @@ def resolve_runtime_candidates(
                     and _runtime_variant(product_id, item) not in excluded
                 ]
                 if main_candidates:
-                    newest = max(main_candidates, key=lambda item: item["version"])
-                    if newest["tag"] not in {item["runtime_tag"] for item in selected}:
-                        selected.append({
-                            "runtime_tag": str(newest["tag"]),
-                            "version": str(newest["version_text"]),
-                            "channel": "nightly",
-                        })
+                    # Keep one current ``main`` tag for each Ascend target.  The
+                    # upstream repository publishes both 910b and a3 variants.
+                    for variant in ("a2", "a3"):
+                        candidates = [
+                            item for item in main_candidates
+                            if _runtime_variant(product_id, item) == variant
+                        ]
+                        if not candidates:
+                            continue
+                        newest = max(candidates, key=lambda item: item["version"])
+                        if newest["tag"] not in {item["runtime_tag"] for item in selected}:
+                            selected.append({
+                                "runtime_tag": str(newest["tag"]),
+                                "version": str(newest["version_text"]),
+                                "channel": "nightly",
+                            })
         if not selected:
             raise ValueError(
                 f"{product_id}: no Runtime Registry tags satisfy the selection windows"
@@ -632,9 +655,6 @@ def resolve_upstreams(
         str(item["id"]): _mapping(item, "release product")
         for item in release["products"]  # type: ignore[index]
     }
-    image_suffix = (
-        f"-ucm-{runtime_contract.oci_tag_version(str(release['ucm_version']))}"
-    )
     runtimes: list[dict[str, object]] = []
     for reference, group in sorted(grouped.items()):
         candidate = candidate_by_ref[reference]
@@ -685,6 +705,15 @@ def resolve_upstreams(
         runtime_id = re.sub(r"[^a-z0-9._-]+", "-", f"{product_id}-{tag}".lower()).strip(
             ".-"
         )
+        image_suffix = (
+            f"-ucm-{runtime_contract.oci_tag_version(str(release['ucm_version']))}"
+        )
+        if product_id == "sglang" and tag.startswith("main-cann"):
+            # Preserve the upstream main tag shape and add a collision-resistant
+            # UCM timestamp, instead of projecting it to dev.0.0.0.
+            stamp_match = re.search(r"\.dev(\d{14})$", str(candidate["version"]))
+            if stamp_match is not None:
+                image_suffix += f"-{stamp_match.group(1)}"
         target_tag = runtime_contract.project_runtime_image_tag(
             tag + image_suffix,
             tag_prefix=str(release.get("runtime_image_tag_prefix", "")),
