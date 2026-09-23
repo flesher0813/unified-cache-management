@@ -49,6 +49,24 @@ def test_runtime_images_install_the_same_run_toolkit_wheel_by_default() -> None:
     assert "needs.build-toolkit.result == 'success'" in bot["build-images"]["if"]
 
 
+def test_chart_receives_a_filtered_plan_with_the_standard_plan_filename() -> None:
+    release = _load("release-ucm.yml")["jobs"]
+    plan = release["plan"]
+    assert plan["outputs"]["chart_plan_artifact"] == (
+        "${{ steps.plan.outputs.chart_plan_artifact }}"
+    )
+    chart_upload = next(
+        step
+        for step in plan["steps"]
+        if step.get("with", {}).get("name")
+        == "${{ steps.plan.outputs.chart_plan_artifact }}"
+    )
+    assert chart_upload["with"]["path"] == "out/chart-plan/release-plan.json"
+    assert release["package-chart"]["with"]["plan_artifact"] == (
+        "${{ needs.plan.outputs.chart_plan_artifact }}"
+    )
+
+
 def test_nightly_schedule_creates_or_reuses_a_tag_then_calls_core_in_same_run() -> None:
     workflow = _load("release-nightly.yml")
     assert workflow["on"]["schedule"] == [{"cron": "0 18 * * *"}]
