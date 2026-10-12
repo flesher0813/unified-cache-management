@@ -37,21 +37,3 @@ def apply() -> None:
     import sglang.srt.server_args as server_args
 
     patch_helper(server_args, "add_cli_args_from_dataclass")
-
-    from sglang.srt.arg_groups import hicache_hook
-
-    original = hicache_hook.handle_hicache
-    if getattr(original, "_ucm_wrapped", False):
-        return
-
-    def handle_hicache(server_args):
-        if (
-            server_args.enable_unified_cache_external_linker
-            and server_args.unified_cache_external_linker_backend == "ucm"
-            and server_args.enable_linker_mla_dedup
-        ):
-            raise ValueError("UCM direct linker does not support MLA deduplication.")
-        return original(server_args)
-
-    handle_hicache._ucm_wrapped = True
-    hicache_hook.handle_hicache = handle_hicache
