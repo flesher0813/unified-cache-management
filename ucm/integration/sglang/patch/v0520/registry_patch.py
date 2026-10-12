@@ -1,26 +1,24 @@
-"""Add UCM to SGLang 0.5.20's external-linker factory."""
+"""Add UCM to the local SGLang v0.5.20 external-linker factory."""
 
 from __future__ import annotations
 
 
 def apply() -> None:
-    """Patch only the UCM backend; preserve all built-in backend behavior."""
+    """Patch SGLang v0.5.20's private unified-cache factory."""
     from sglang.srt.mem_cache import registry
 
-    original = registry.create_unified_radix_cache
+    original = registry._create_unified_radix_cache
     if getattr(original, "_ucm_patched", False):
         return
 
-    def create_unified_radix_cache(ctx, *, cache_class=None):
-        # This is SGLang 0.5.20's factory with one additional linker branch.
-        # Keeping the complete factory avoids changing setup for Mooncake, Mori,
-        # HiCache, hybrid cache components, and platform-specific components.
+    def create_unified_radix_cache(ctx, server_args, params):
+        # This is the local release/v0.5.20 factory, with only the UCM backend
+        # branch added. Mooncake, Mori, HiCache, and component setup stay exact.
         from sglang.srt.hardware_backend.mlx.runtime import use_mlx
         from sglang.srt.mem_cache.unified_cache.components import ComponentType
         from sglang.srt.mem_cache.unified_radix_cache import UnifiedRadixCache
         from sglang.srt.runtime_context import get_disagg, get_memory
 
-        server_args, params = ctx.server_args, ctx.params
         if get_disagg().disaggregation_decode_retraction_backup == "host_pool":
             if ctx.is_hybrid_ssm:
                 raise ValueError("Host-pool retraction does not support Mamba models.")
@@ -56,7 +54,7 @@ def apply() -> None:
                 ComponentType.MAMBA: MlxAuxiliaryStateComponent,
             }
 
-        cache = (cache_class or UnifiedRadixCache)(params)
+        cache = UnifiedRadixCache(params)
         if (
             ctx.enable_hierarchical_cache
             or get_disagg().disaggregation_decode_retraction_backup == "host_pool"
@@ -98,4 +96,4 @@ def apply() -> None:
         return cache
 
     create_unified_radix_cache._ucm_patched = True
-    registry.create_unified_radix_cache = create_unified_radix_cache
+    registry._create_unified_radix_cache = create_unified_radix_cache
