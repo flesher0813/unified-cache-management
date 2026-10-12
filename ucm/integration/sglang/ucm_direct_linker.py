@@ -116,39 +116,11 @@ class _PoolBundle:
     entries: tuple[DevicePoolEntry, ...]
 
 
-class _NoopUcmDirectStoreAdapter:
-    """Startup-only adapter that deliberately reports external-cache misses."""
-
-    def register_device_pools(self, pools: list[UcmPoolMetadata]) -> None:
-        return None
-
-    def lookup(
-        self, transfers: list[UcmLayerTransfer], page_keys: list[str]
-    ) -> list[int]:
-        return []
-
-    def submit_load(self, transfers: list[UcmLayerTransfer]) -> list[object]:
-        return []
-
-    def submit_offload(self, transfers: list[UcmLayerTransfer]) -> list[object]:
-        return []
-
-    def wait(self, tasks: object) -> None:
-        return None
-
-    def check(self, task: object) -> bool:
-        return True
-
-    def close(self) -> None:
-        return None
-
-
 class UcmDirectLinker(UnifiedCacheLinker):
     """Link SGLang's L1 cache pools to a UCM Store adapter.
 
     ``adapter`` is injectable for focused tests. In a normal process it is
-    created from the UCM configuration. ``UCM_SGLANG_ALLOW_NOOP_LINKER=1``
-    retains a startup-only mode for patch and service-start checks.
+    created from the UCM configuration.
     """
 
     def __init__(
@@ -222,14 +194,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
         self._offload_thread.start()
 
     def _create_adapter(self, params: CacheInitParams) -> UcmDirectStoreAdapter:
-        if os.environ.get("UCM_SGLANG_ALLOW_NOOP_LINKER", "").lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            logger.warning("Starting SGLang UCM linker with the no-op store adapter.")
-            return _NoopUcmDirectStoreAdapter()  # type: ignore[return-value]
         identity = {
             "model": getattr(get_model(), "model_path", None),
             "tp_rank": self._tp_rank,

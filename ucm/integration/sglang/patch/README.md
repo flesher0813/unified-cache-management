@@ -16,10 +16,10 @@ identity and Store group, then stores one logical page/layer payload per UCM
 block. DSA KV and INDEXER data share one composite block when they belong to
 the same pool group.
 
-For patch and server-startup checks only, set `UCM_SGLANG_ALLOW_NOOP_LINKER=1`.
-The no-op linker attaches successfully but always reports an external-cache
-miss and never writes external KV data. Edit the local configuration block in
-`scripts/launch_sglang_ucm_linker_noop.sh`, then run it to start SGLang with
-the UCM backend.
+Edit the local configuration block in
+`scripts/launch_sglang_ucm_linker.sh`, then run it to start SGLang with the
+UCM backend and a real Store. The launcher exports the patch and UCM
+configuration variables, verifies that `ucm_patch.pth` activated the runtime
+patch, and writes the service and patch checks to its log directory.
 
 Runtime patch modules are Python files; no diff files are loaded.
