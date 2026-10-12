@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Single-host Linux + NVIDIA launcher for the UCM L1 linker patch.
-# The no-op linker validates SGLang patching and linker attachment only: it
-# always misses external cache and never persists KV data.
+# Single-host Linux + NVIDIA launcher for SGLang 0.5.20 with the real UCM L1
+# external-cache linker. Edit the local configuration block before use.
 #
-# Edit the configuration block below for the target host and model. Extra
-# SGLang arguments may be supplied after --; managed linker/network arguments
-# are rejected. Ctrl-C stops the SGLang process group and retains its log.
+# Prerequisites: install this UCM checkout with ucm_patch.pth, install the
+# matching SGLang package, and configure a usable Store in UCM_CONFIG_FILE.
+# Extra SGLang arguments may be supplied after --. Managed linker and network
+# options are rejected so the process cannot silently start a different mode.
 
 set -Eeuo pipefail
 
@@ -14,6 +14,8 @@ if [[ ${1:-} == --help || ${1:-} == -h ]]; then
     exit 0
 fi
 [[ $(uname -s) == Linux ]] || { echo 'Run on a Linux GPU host.' >&2; exit 1; }
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # ---------------------------------------------------------------------------
 # Local configuration
@@ -27,7 +29,8 @@ MAX_TOTAL_TOKENS=4096
 MAX_RUNNING_REQUESTS=1
 MEM_FRACTION_STATIC=0.7
 START_TIMEOUT=600
-LOG_DIR=./logs/ucm-linker-noop-$(date +%Y%m%d-%H%M%S)-$$
+UCM_CONFIG_FILE="$ROOT_DIR/examples/ucm_config_example.yaml"
+LOG_DIR="$ROOT_DIR/logs/ucm-linker-$(date +%Y%m%d-%H%M%S)-$$"
 # ---------------------------------------------------------------------------
 
 [[ ${1:-} != -- ]] || shift
@@ -44,6 +47,10 @@ for number in "$TP_SIZE" "$SGLANG_PORT" "$MAX_TOTAL_TOKENS" \
         exit 1
     }
 done
+[[ -f $UCM_CONFIG_FILE ]] || {
+    echo "UCM configuration file does not exist: $UCM_CONFIG_FILE" >&2
+    exit 1
+}
 for argument in "$@"; do
     case "$argument" in
         --model-path|--model-path=*|--tp-size|--tp-size=*|--host|--host=*|--port|--port=*|--enable-hierarchical-cache|--enable-lmcache|--enable-unified-cache-external-linker|--unified-cache-external-linker-backend|--unified-cache-external-linker-backend=*)
@@ -56,10 +63,13 @@ done
 mkdir -p "$LOG_DIR"
 LOG_DIR=$(cd "$LOG_DIR" && pwd)
 
-"$PYTHON" - "$TP_SIZE" "$SGLANG_PORT" <<'PY'
+"$PYTHON" - "$TP_SIZE" "$SGLANG_PORT" "$UCM_CONFIG_FILE" <<'PY'
 import socket
 import sys
+from pathlib import Path
+
 import torch
+import yaml
 
 assert torch.cuda.is_available() and torch.version.hip is None, 'Requires NVIDIA CUDA GPUs'
 assert torch.cuda.device_count() >= int(sys.argv[1]), 'Insufficient visible GPUs for TP_SIZE'
@@ -67,16 +77,41 @@ port = int(sys.argv[2])
 assert 0 < port < 65536, f'Invalid port: {port}'
 with socket.socket() as sock:
     sock.bind(('0.0.0.0', port))
+
+document = yaml.safe_load(Path(sys.argv[3]).read_text(encoding='utf-8')) or {}
+connectors = document.get('ucm_connectors') if isinstance(document, dict) else None
+assert isinstance(connectors, list) and len(connectors) == 1, (
+    'UCM_CONFIG_FILE must contain exactly one ucm_connectors entry'
+)
+connector = connectors[0]
+assert isinstance(connector, dict) and connector.get('ucm_connector_name'), (
+    'UCM connector entry is missing ucm_connector_name'
+)
+assert isinstance(connector.get('ucm_connector_config'), dict), (
+    'UCM connector entry is missing ucm_connector_config'
+)
 PY
-"$PYTHON" -m sglang.launch_server --help >"$LOG_DIR/sglang-help.log" 2>&1
-grep -q -- '--enable-unified-cache-external-linker' "$LOG_DIR/sglang-help.log" || {
-    echo "Installed SGLang lacks external linker support; see $LOG_DIR/sglang-help.log" >&2
-    exit 1
-}
 
 export ENABLE_UCM_SGLANG_PATCH=1
 export UCM_SGLANG_VERSION=0.5.20
-export UCM_SGLANG_ALLOW_NOOP_LINKER=1
+export UNIFIEDCACHE_CONFIG_FILE="$UCM_CONFIG_FILE"
+
+"$PYTHON" - <<'PY' >"$LOG_DIR/patch-check.log" 2>&1
+import sglang
+from sglang.srt.mem_cache import registry
+
+if not getattr(registry._create_unified_radix_cache, '_ucm_patched', False):
+    raise RuntimeError(
+        'The UCM SGLang import hook was not installed. Install ucm_patch.pth '
+        'into this Python environment before running this launcher.'
+    )
+PY
+"$PYTHON" -m sglang.launch_server --help >"$LOG_DIR/sglang-help.log" 2>&1
+grep -q -- '--enable-unified-cache-external-linker' "$LOG_DIR/sglang-help.log" && \
+    grep -q -- 'ucm' "$LOG_DIR/sglang-help.log" || {
+    echo "SGLang UCM CLI patch is unavailable; see $LOG_DIR/patch-check.log and $LOG_DIR/sglang-help.log" >&2
+    exit 1
+}
 
 pid=''
 cleanup() {
@@ -108,6 +143,7 @@ setsid "$PYTHON" -m sglang.launch_server \
     "$@" >"$LOG_DIR/sglang.log" 2>&1 &
 pid=$!
 echo "Started SGLang (PID $pid), log: $LOG_DIR/sglang.log"
+echo "UCM config: $UNIFIEDCACHE_CONFIG_FILE"
 
 health_host=$SGLANG_HOST
 [[ $health_host != 0.0.0.0 ]] || health_host=127.0.0.1
@@ -116,7 +152,7 @@ until curl --noproxy '*' -fsS --max-time 2 \
     "http://$health_host:$SGLANG_PORT/health" >/dev/null 2>&1; do
     if ! kill -0 "$pid" 2>/dev/null; then
         echo 'SGLang exited; recent log:' >&2
-        tail -n 40 "$LOG_DIR/sglang.log" >&2
+        tail -n 80 "$LOG_DIR/sglang.log" >&2
         exit 1
     fi
     if ((SECONDS >= deadline)); then
@@ -127,5 +163,5 @@ until curl --noproxy '*' -fsS --max-time 2 \
 done
 
 echo "SGLang ready: http://$health_host:$SGLANG_PORT"
-echo "No-op UCM linker active: no external KV reads or writes occur."
+echo "UCM linker and Store adapter are active."
 wait "$pid"
