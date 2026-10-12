@@ -10,8 +10,13 @@ matching SGLang factory and adds only
 the `ucm` backend branch. Mooncake and Mori retain their upstream selection,
 initialization, and default behavior. The UCM store adapter in
 `ucm_direct_store_adapter.py` intentionally contains interface stubs only, so
-selecting `ucm` raises a clear `NotImplementedError` before any cache is
-attached or transfer worker is started.
+selecting `ucm` raises a clear `NotImplementedError` by default before any
+cache is attached or transfer worker is started.
+
+For patch and server-startup checks only, set `UCM_SGLANG_ALLOW_NOOP_LINKER=1`.
+The no-op linker attaches successfully but always reports an external-cache
+miss and never writes external KV data. `scripts/launch_sglang_ucm_linker_noop.sh`
+sets this flag and starts SGLang with the UCM backend.
 
 This patch-only step does not implement GPU transfers or external-store
 behavior. Runtime patch modules are Python files; no diff files are loaded.
