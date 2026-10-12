@@ -1,76 +1,617 @@
-"""SGLang L1 external-linker placeholder for the UCM backend.
+"""UCM implementation of SGLang's direct L1 external-cache linker.
 
-The versioned registry patch can select this class without modifying SGLang's
-built-in Mooncake or Mori paths. Real UCM external storage is not implemented.
-An explicit no-op mode exists solely to exercise the patch and server startup
-path: it reports no external hits and does not persist cache data.
+This module owns the SGLang side only: it materializes device-pool views,
+converts ``PoolTransfer`` objects to neutral UCM records, and drives SGLang's
+layer-ready and completion queues. Store setup and I/O stay in the adapter.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import threading
+from concurrent.futures import Future
+from dataclasses import dataclass
+from queue import Empty, Queue
+from typing import Any
 
+import torch
+from sglang.srt.mem_cache.cache_init_params import CacheInitParams
+from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
+from sglang.srt.mem_cache.hybrid_cache.linker_pool_assembler import (
+    DevicePoolEntry,
+    resolve_hybrid_device_pool_group,
+)
 from sglang.srt.mem_cache.unified_cache.unified_cache_linker import UnifiedCacheLinker
+from sglang.srt.runtime_context import get_model, get_parallel
+from sglang.srt.utils import freeze_gc, get_device_module
 
-_STORE_UNIMPLEMENTED = (
-    "UCM SGLang L1 external storage is not implemented yet. "
-    "Select --unified-cache-external-linker-backend mooncake or mori, or set "
-    "UCM_SGLANG_ALLOW_NOOP_LINKER=1 for the startup-only no-op linker."
+from ucm.integration.sglang.ucm_direct_store_adapter import (
+    UcmDirectStoreAdapter,
+    UcmLayerTransfer,
+    UcmPoolMetadata,
 )
 
+logger = logging.getLogger(__name__)
+device_module = get_device_module()
 
-class _NoopLayerDoneCounter:
-    """Counter protocol implementation for a linker that never queues a load."""
+
+class LayerWiseLoadCounter:
+    """Completion counter consumed by SGLang's layer-transfer hooks."""
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+        self.producer_index = -1
+        self.consumer_index = -1
+        self.futures: dict[int, list[Future]] = {}
+        self._lock = threading.Lock()
+
+    def update_producer(self) -> int:
+        with self._lock:
+            self.producer_index += 1
+            index = self.producer_index
+            self.futures[index] = [Future() for _ in range(self.num_layers)]
+            return index
 
     def set_consumer(self, index: int) -> None:
-        return None
+        with self._lock:
+            self.consumer_index = index
+
+    def complete(self, index: int, layer: int) -> None:
+        with self._lock:
+            futures = self.futures.get(index)
+            if futures is None:
+                raise RuntimeError(f"UCM completion references unknown batch {index}.")
+            if not 0 <= layer < len(futures):
+                raise IndexError(f"UCM completion has invalid layer {layer}.")
+            future = futures[layer]
+        if not future.done():
+            future.set_result(None)
+
+    def fail(self, index: int, error: BaseException) -> None:
+        with self._lock:
+            futures = tuple(self.futures.get(index, ()))
+        for future in futures:
+            if not future.done():
+                future.set_exception(error)
 
     def wait_until(self, threshold: int) -> None:
+        with self._lock:
+            index = self.consumer_index
+            futures = self.futures.get(index)
+        if futures is None:
+            return
+        if not 0 <= threshold < len(futures):
+            raise IndexError(
+                f"UCM wait has invalid layer {threshold} for batch {index}."
+            )
+        try:
+            futures[threshold].result()
+        except BaseException as error:
+            raise RuntimeError("UCM layer-wise KV load failed.") from error
+        finally:
+            if threshold == self.num_layers - 1:
+                with self._lock:
+                    self.futures.pop(index, None)
+
+    def reset(self) -> None:
+        with self._lock:
+            self.producer_index = -1
+            self.consumer_index = -1
+            self.futures.clear()
+
+
+@dataclass(frozen=True)
+class _PoolBundle:
+    """Physical pools persisted together as one UCM block payload.
+
+    A bundle is deliberately stricter than ``indices_from_pool`` alone: its
+    entries must also cover the same logical-layer set.  DSA's KV and INDEXER
+    entries satisfy this, so one page/layer becomes one composite Store block.
+    """
+
+    name: str
+    source_pool: PoolName
+    layers: tuple[int, ...]
+    entries: tuple[DevicePoolEntry, ...]
+
+
+class _NoopUcmDirectStoreAdapter:
+    """Startup-only adapter that deliberately reports external-cache misses."""
+
+    def register_device_pools(self, pools: list[UcmPoolMetadata]) -> None:
+        return None
+
+    def lookup(
+        self, transfers: list[UcmLayerTransfer], page_keys: list[str]
+    ) -> list[int]:
+        return []
+
+    def submit_load(self, transfers: list[UcmLayerTransfer]) -> list[object]:
+        return []
+
+    def submit_offload(self, transfers: list[UcmLayerTransfer]) -> list[object]:
+        return []
+
+    def wait(self, tasks: object) -> None:
+        return None
+
+    def check(self, task: object) -> bool:
+        return True
+
+    def close(self) -> None:
         return None
 
 
 class UcmDirectLinker(UnifiedCacheLinker):
-    """Reserved linker implementation until ``UcmDirectStoreAdapter`` is ready."""
+    """Link SGLang's L1 cache pools to a UCM Store adapter.
 
-    def __init__(self, server_args, params, *, components):
-        if os.environ.get("UCM_SGLANG_ALLOW_NOOP_LINKER", "").lower() not in (
+    ``adapter`` is injectable for focused tests. In a normal process it is
+    created from the UCM configuration. ``UCM_SGLANG_ALLOW_NOOP_LINKER=1``
+    retains a startup-only mode for patch and service-start checks.
+    """
+
+    def __init__(
+        self,
+        server_args: Any,
+        params: CacheInitParams,
+        *,
+        components,
+        adapter: UcmDirectStoreAdapter | None = None,
+    ):
+        del server_args
+        self.page_size = params.page_size
+        kvcache = params.token_to_kv_pool_allocator.get_kvcache()
+        self.pool_group = resolve_hybrid_device_pool_group(
+            kvcache=kvcache,
+            page_size=self.page_size,
+            params=params,
+            components=components,
+        )
+        self.pools = self.pool_group.entry_map
+        self.num_layers = self.pool_group.num_layers
+        self._bundles = self._build_pool_bundles()
+        self._closed = False
+        self._gc_frozen = False
+        self._pending_loads: dict[str, list[PoolTransfer]] = {}
+        self._pending_lock = threading.Lock()
+        self._load_queue: Queue[
+            tuple[int, dict[str, list[PoolTransfer]], object] | None
+        ] = Queue()
+        self._completed_loads: Queue[list[str]] = Queue()
+        self._offload_queue: Queue[tuple[list[PoolTransfer], object] | None] = Queue()
+        self._offload_results: Queue[bool] = Queue()
+        self.stats = {"lookup": 0, "load": 0, "offload": 0}
+
+        self._tp_rank = 0
+        self._tp_size = get_parallel().tp_size
+        tp_group = params.attn_tp_cache_group or params.tp_cache_group
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            self._tp_rank = torch.distributed.get_rank(group=tp_group)
+            self._tp_size = torch.distributed.get_world_size(group=tp_group)
+        self._offload_owner = not self.pool_group.rank_replicated or self._tp_rank == 0
+        self._log_pool_topology()
+        try:
+            self.adapter = adapter or self._create_adapter(params)
+            self.adapter.register_device_pools(self._pool_metadata())
+        except Exception:
+            logger.exception(
+                "UCM linker initialization failed: layers=%d tp=%d/%d replicated=%s.",
+                self.num_layers,
+                self._tp_rank,
+                self._tp_size,
+                self.pool_group.rank_replicated,
+            )
+            raise
+
+        self.layer_done_counter = LayerWiseLoadCounter(self.num_layers)
+        if PoolName.MAMBA in self.pools:
+            params.req_to_token_pool.register_layer_transfer_counter(
+                self.layer_done_counter
+            )
+
+        self._load_thread = threading.Thread(
+            target=self._load_worker, daemon=True, name=f"ucm-load-tp{self._tp_rank}"
+        )
+        self._offload_thread = threading.Thread(
+            target=self._offload_worker,
+            daemon=True,
+            name=f"ucm-offload-tp{self._tp_rank}",
+        )
+        self._load_thread.start()
+        self._offload_thread.start()
+
+    def _create_adapter(self, params: CacheInitParams) -> UcmDirectStoreAdapter:
+        if os.environ.get("UCM_SGLANG_ALLOW_NOOP_LINKER", "").lower() in {
             "1",
             "true",
             "yes",
             "on",
+        }:
+            logger.warning("Starting SGLang UCM linker with the no-op store adapter.")
+            return _NoopUcmDirectStoreAdapter()  # type: ignore[return-value]
+        identity = {
+            "model": getattr(get_model(), "model_path", None),
+            "tp_rank": self._tp_rank,
+            "tp_size": self._tp_size,
+            "pp_rank": params.pp_rank,
+            "pp_size": params.pp_size,
+            "attn_cp_rank": params.attn_cp_rank,
+            "attn_cp_size": params.attn_cp_size,
+            "rank_replicated": self.pool_group.rank_replicated,
+            "device_id": int(os.environ.get("LOCAL_RANK", "0")),
+        }
+        config = {"config_file": os.environ.get("UNIFIEDCACHE_CONFIG_FILE")}
+        return UcmDirectStoreAdapter.from_config(config, identity)
+
+    def _pool_metadata(self) -> list[UcmPoolMetadata]:
+        metadata = []
+        for bundle in self._bundles:
+            for entry in bundle.entries:
+                layer_schemas = tuple(
+                    (layer, self._entry_layer_schema(entry, layer))
+                    for layer in bundle.layers
+                )
+                metadata.append(
+                    UcmPoolMetadata(
+                        name=f"{bundle.name}:{entry.name}",
+                        source_pool=str(bundle.source_pool),
+                        store_group=bundle.name,
+                        page_size=entry.page_size,
+                        layer_schemas=layer_schemas,
+                        device_buffers=tuple(
+                            (int(buffer.data_ptr()), int(buffer.nbytes))
+                            for buffer in entry.kv_buffer
+                            if buffer.data_ptr() and buffer.nbytes
+                        ),
+                    )
+                )
+        return metadata
+
+    def _build_pool_bundles(
+        self,
+    ) -> tuple[_PoolBundle, ...]:
+        """Group entries that can share one page/layer Store block schema."""
+        grouped: dict[tuple[PoolName, tuple[int, ...]], list[DevicePoolEntry]] = {}
+        for entry in self.pools.values():
+            layers = tuple(sorted(entry.layer_mapping))
+            if not layers:
+                continue
+            if any(layer < 0 or layer >= self.num_layers for layer in layers):
+                raise ValueError(
+                    f"UCM pool {entry.name} has out-of-range layers {layers}."
+                )
+            grouped.setdefault((entry.indices_from_pool, layers), []).append(entry)
+
+        bundles = []
+        for (source_pool, layers), entries in grouped.items():
+            ordered = tuple(sorted(entries, key=lambda entry: str(entry.name)))
+            by_schema: dict[tuple[int, ...], list[int]] = {}
+            for layer in layers:
+                schema = tuple(
+                    size
+                    for entry in ordered
+                    for size, _ in self._entry_layer_schema(entry, layer)
+                )
+                if not schema:
+                    raise ValueError(
+                        f"UCM pool group {source_pool} has no fragments at layer {layer}."
+                    )
+                by_schema.setdefault(schema, []).append(layer)
+            base_name = (
+                f"{source_pool}__{'__'.join(str(entry.name) for entry in ordered)}"
+            )
+            for index, (_, schema_layers) in enumerate(sorted(by_schema.items())):
+                layer_label = "_".join(map(str, schema_layers))
+                bundles.append(
+                    _PoolBundle(
+                        f"{base_name}__shape{index}__layers{layer_label}",
+                        source_pool,
+                        tuple(schema_layers),
+                        ordered,
+                    )
+                )
+        return tuple(bundles)
+
+    def _log_pool_topology(self) -> None:
+        logger.info(
+            "UCM device-pool topology: layers=%d page_size=%d pools=%d bundles=%d "
+            "tp=%d/%d replicated=%s.",
+            self.num_layers,
+            self.page_size,
+            len(self.pools),
+            len(self._bundles),
+            self._tp_rank,
+            self._tp_size,
+            self.pool_group.rank_replicated,
+        )
+        for bundle in self._bundles:
+            schema = tuple(
+                size
+                for entry in bundle.entries
+                for size, _ in self._entry_layer_schema(entry, bundle.layers[0])
+            )
+            logger.info(
+                "UCM pool bundle=%s source=%s pools=%s layers=%s tensors=%d bytes=%d.",
+                bundle.name,
+                bundle.source_pool,
+                [str(entry.name) for entry in bundle.entries],
+                bundle.layers,
+                len(schema),
+                sum(schema),
+            )
+
+    @staticmethod
+    def _entry_layer_schema(
+        entry: DevicePoolEntry, layer: int
+    ) -> tuple[tuple[int, int], ...]:
+        mapped = entry.layer_mapping.get(layer)
+        if mapped is None:
+            return ()
+        buffer_indices = (mapped,) if isinstance(mapped, int) else tuple(mapped)
+        return tuple(
+            (int(component[index][2]), int(offsets[index]))
+            for component, offsets in zip(entry.buffer_meta, entry._component_offsets)
+            for index in buffer_indices
+        )
+
+    def _entry_layer_rows(
+        self, entry: DevicePoolEntry, transfer: PoolTransfer, layer: int
+    ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, int], ...]]:
+        if transfer.host_indices is None:
+            raise ValueError(f"UCM {entry.name} transfer has no device indices.")
+        locations = entry.prepare_locations(transfer.host_indices)
+        meta = entry.get_prepared_layer_range_meta(locations, layer)
+        if meta is None:
+            return (), ()
+        pointers, sizes, offsets = meta
+        page_count = len(transfer.keys or ())
+        if len(pointers) != page_count:
+            raise ValueError(
+                f"UCM bundle requires one address row per page for {entry.name}: "
+                f"rows={len(pointers)} pages={page_count}."
+            )
+        schema = self._entry_layer_schema(entry, layer)
+        rows = tuple(tuple(map(int, row)) for row in pointers)
+        if any(
+            tuple(zip(map(int, row_sizes), map(int, row_offsets))) != schema
+            for row_sizes, row_offsets in zip(sizes, offsets)
         ):
-            raise NotImplementedError(_STORE_UNIMPLEMENTED)
-        self.layer_done_counter = _NoopLayerDoneCounter()
+            raise ValueError(f"UCM {entry.name} layer={layer} has a variable schema.")
+        return rows, schema
 
-    def lookup(self, rid, transfers):
-        return []
+    def _layer_transfers(
+        self, transfers: list[PoolTransfer], layer: int, *, for_io: bool
+    ) -> list[UcmLayerTransfer]:
+        by_name = {transfer.name: transfer for transfer in transfers}
+        result: list[UcmLayerTransfer] = []
+        for bundle in self._bundles:
+            if layer not in bundle.layers:
+                continue
+            members = [(entry, by_name.get(entry.name)) for entry in bundle.entries]
+            if any(transfer is None or not transfer.keys for _, transfer in members):
+                continue
+            page_keys = tuple(members[0][1].keys)
+            hit_policy = members[0][1].hit_policy
+            if any(
+                tuple(transfer.keys) != page_keys or transfer.hit_policy != hit_policy
+                for _, transfer in members[1:]
+            ):
+                raise ValueError(
+                    f"UCM store bundle {bundle.name} has inconsistent source transfer metadata."
+                )
 
-    def load(self, rid, transfers):
+            fragments = tuple(
+                fragment
+                for entry, _ in members
+                for fragment in self._entry_layer_schema(entry, layer)
+            )
+            if not fragments:
+                continue
+            if for_io:
+                rows = [list() for _ in page_keys]
+                for entry, transfer in members:
+                    entry_rows, schema = self._entry_layer_rows(entry, transfer, layer)
+                    if not entry_rows or not schema:
+                        raise ValueError(
+                            f"UCM bundle {bundle.name} is missing {entry.name} layer={layer}."
+                        )
+                    for row, entry_row in zip(rows, entry_rows):
+                        row.extend(entry_row)
+                addresses = tuple(tuple(row) for row in rows)
+                if any(len(row) != len(fragments) for row in addresses):
+                    raise ValueError(
+                        f"UCM bundle {bundle.name} layer={layer} address/schema mismatch."
+                    )
+            else:
+                addresses = tuple(() for _ in page_keys)
+            result.append(
+                UcmLayerTransfer(
+                    store_group=bundle.name,
+                    source_pool=str(bundle.source_pool),
+                    pools=tuple(str(entry.name) for entry in bundle.entries),
+                    layer=layer,
+                    page_keys=page_keys,
+                    addresses=addresses,
+                    fragments=fragments,
+                    hit_policy=str(hit_policy),
+                )
+            )
+        return result
+
+    def _expand(self, transfers: list[PoolTransfer], **kwargs) -> list[PoolTransfer]:
+        return self.pool_group.resolve_transfers(transfers, **kwargs)
+
+    def lookup(self, rid: str, transfers: list[PoolTransfer]) -> list[int]:
+        expanded = self._expand(transfers)
+        if not expanded:
+            return []
+        kv_transfer = next(
+            (transfer for transfer in transfers if transfer.name == PoolName.KV),
+            None,
+        )
+        page_keys = list(kv_transfer.keys or ()) if kv_transfer is not None else []
+        if not page_keys:
+            return []
+        lookup_transfers = [
+            layer_transfer
+            for layer in range(self.num_layers)
+            for layer_transfer in self._layer_transfers(expanded, layer, for_io=False)
+        ]
+        if not lookup_transfers:
+            return []
+        result = self.adapter.lookup(lookup_transfers, page_keys)
+        self.stats["lookup"] += 1
+        if result:
+            logger.debug("UCM linker lookup hit: rid=%s pages=%d", rid, result[-1])
+        return result
+
+    def load(self, rid: str, transfers: list[PoolTransfer]) -> bool:
+        expanded = self._expand(transfers, allow_partial=True, allow_missing_kv=True)
+        if not expanded:
+            return False
+        with self._pending_lock:
+            if rid in self._pending_loads:
+                raise RuntimeError(f"UCM load for rid={rid} is already queued.")
+            self._pending_loads[rid] = expanded
+        return True
+
+    def cancel_queued_load(self, rid: str) -> bool:
+        # The tree has already made the external hit visible before it invokes
+        # this hook. Removing its transfer would leave device slots referenced
+        # by that node uninitialized. This matches SGLang's other direct
+        # linkers, which only cancel work before the node is published.
         return False
 
-    def start_layer_wise_loading(self):
-        return -1
+    def num_completed_loads(self) -> int:
+        return self._completed_loads.qsize()
 
-    def cancel_queued_load(self, rid):
-        return False
+    def pop_completed_load(self) -> list[str]:
+        return self._completed_loads.get_nowait()
 
-    def num_completed_loads(self):
-        return 0
+    def _freeze_gc_once(self) -> None:
+        if not self._gc_frozen:
+            freeze_gc("UCM direct linker")
+            self._gc_frozen = True
 
-    def pop_completed_load(self):
-        raise RuntimeError("UCM no-op linker has no completed loads.")
+    def start_layer_wise_loading(self) -> int:
+        with self._pending_lock:
+            if not self._pending_loads:
+                return -1
+            pending = self._pending_loads
+            self._pending_loads = {}
+        self._freeze_gc_once()
+        counter_index = self.layer_done_counter.update_producer()
+        ready_event = device_module.Event()
+        ready_event.record()
+        self._load_queue.put((counter_index, pending, ready_event))
+        self.stats["load"] += len(pending)
+        return counter_index
 
-    def offload(self, transfers):
-        return False
+    def _wait_tasks(self, tasks: object) -> None:
+        self.adapter.wait(tasks)
+        if tasks is None:
+            return
+        iterable = tasks if isinstance(tasks, (list, tuple, set)) else (tasks,)
+        if not all(self.adapter.check(task) for task in iterable):
+            raise RuntimeError("UCM Store reported an unsuccessful transfer task.")
 
-    def num_completed_offloads(self):
-        return 0
+    def _load_worker(self) -> None:
+        while True:
+            task = self._load_queue.get()
+            try:
+                if task is None:
+                    return
+                counter_index, pending, ready_event = task
+                try:
+                    ready_event.synchronize()
+                    for layer in range(self.num_layers):
+                        layer_transfers = [
+                            transfer
+                            for request in pending.values()
+                            for transfer in self._layer_transfers(
+                                request, layer, for_io=True
+                            )
+                        ]
+                        if layer_transfers:
+                            self._wait_tasks(self.adapter.submit_load(layer_transfers))
+                        self.layer_done_counter.complete(counter_index, layer)
+                except BaseException as error:
+                    self.layer_done_counter.fail(counter_index, error)
+                    logger.exception("UCM layer-wise load batch failed")
+                finally:
+                    self._completed_loads.put(list(pending))
+            finally:
+                self._load_queue.task_done()
 
-    def pop_completed_offload(self):
-        raise RuntimeError("UCM no-op linker has no completed offloads.")
+    def offload(self, transfers: list[PoolTransfer]) -> bool:
+        expanded = self._expand(transfers, allow_partial=True)
+        if not expanded:
+            return False
+        self._freeze_gc_once()
+        if not self._offload_owner:
+            self._offload_results.put(True)
+            return True
+        ready_event = device_module.Event()
+        ready_event.record()
+        self._offload_queue.put((expanded, ready_event))
+        return True
 
-    def reset(self):
-        return None
+    def _offload_worker(self) -> None:
+        while True:
+            task = self._offload_queue.get()
+            try:
+                if task is None:
+                    return
+                expanded, ready_event = task
+                ready_event.synchronize()
+                transfers = [
+                    layer_transfer
+                    for layer in range(self.num_layers)
+                    for layer_transfer in self._layer_transfers(
+                        expanded, layer, for_io=True
+                    )
+                ]
+                self._wait_tasks(self.adapter.submit_offload(transfers))
+                self.stats["offload"] += 1
+                self._offload_results.put(True)
+            except BaseException:
+                logger.exception("UCM offload failed")
+                self._offload_results.put(False)
+            finally:
+                self._offload_queue.task_done()
 
-    def close(self):
-        return None
+    def num_completed_offloads(self) -> int:
+        return self._offload_results.qsize()
+
+    def pop_completed_offload(self) -> bool:
+        return self._offload_results.get_nowait()
+
+    @staticmethod
+    def _drain(queue: Queue) -> None:
+        while True:
+            try:
+                queue.get_nowait()
+            except Empty:
+                return
+
+    def reset(self) -> None:
+        with self._pending_lock:
+            self._pending_loads.clear()
+        self._load_queue.join()
+        self._offload_queue.join()
+        self._drain(self._completed_loads)
+        self._drain(self._offload_results)
+        self.layer_done_counter.reset()
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self.reset()
+        self._closed = True
+        self._load_queue.put(None)
+        self._offload_queue.put(None)
+        self._load_thread.join()
+        self._offload_thread.join()
+        self.adapter.close()
+        logger.info("UCM direct linker stats: %s", self.stats)
