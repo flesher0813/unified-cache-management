@@ -203,7 +203,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
             "attn_cp_rank": params.attn_cp_rank,
             "attn_cp_size": params.attn_cp_size,
             "rank_replicated": self.pool_group.rank_replicated,
-            "device_id": int(os.environ.get("LOCAL_RANK", "0")),
+            "device_id": int(device_module.current_device()),
         }
         config = {"config_file": os.environ.get("UNIFIEDCACHE_CONFIG_FILE")}
         return UcmDirectStoreAdapter.from_config(config, identity)
@@ -292,11 +292,13 @@ class UcmDirectLinker(UnifiedCacheLinker):
         for bundle in self._bundles:
             schema = tuple(
                 size
-                for entry in bundle.entries
-                for size, _ in self._entry_layer_schema(entry, bundle.layers[0])
+                for layer in bundle.layers
+                for entry in sorted(bundle.entries, key=lambda item: str(item.name))
+                for size, _ in self._entry_layer_schema(entry, layer)
             )
             logger.info(
-                "UCM pool bundle=%s source=%s pools=%s layers=%s tensors=%d bytes=%d.",
+                "UCM pool bundle=%s source=%s pools=%s layers=%s "
+                "page_block_tensors=%d page_block_bytes=%d.",
                 bundle.name,
                 bundle.source_pool,
                 [str(entry.name) for entry in bundle.entries],
@@ -344,15 +346,16 @@ class UcmDirectLinker(UnifiedCacheLinker):
             raise ValueError(f"UCM {entry.name} layer={layer} has a variable schema.")
         return rows, schema
 
-    def _layer_transfers(
-        self, transfers: list[PoolTransfer], layer: int, *, for_io: bool
+    def _page_transfers(
+        self, transfers: list[PoolTransfer], *, for_io: bool
     ) -> list[UcmLayerTransfer]:
         by_name = {transfer.name: transfer for transfer in transfers}
         result: list[UcmLayerTransfer] = []
         for bundle in self._bundles:
-            if layer not in bundle.layers:
-                continue
-            members = [(entry, by_name.get(entry.name)) for entry in bundle.entries]
+            members = [
+                (entry, by_name.get(entry.name))
+                for entry in sorted(bundle.entries, key=lambda item: str(item.name))
+            ]
             if any(transfer is None or not transfer.keys for _, transfer in members):
                 continue
             page_keys = tuple(members[0][1].keys)
@@ -367,25 +370,48 @@ class UcmDirectLinker(UnifiedCacheLinker):
 
             fragments = tuple(
                 fragment
+                for layer in bundle.layers
                 for entry, _ in members
                 for fragment in self._entry_layer_schema(entry, layer)
             )
             if not fragments:
                 continue
+            layer_sizes = tuple(
+                sum(
+                    size
+                    for entry, _ in members
+                    for size, _ in self._entry_layer_schema(entry, layer)
+                )
+                for layer in bundle.layers
+            )
+            if not layer_sizes or len(set(layer_sizes)) != 1:
+                raise ValueError(
+                    f"UCM bundle {bundle.name} has inconsistent layer sizes: "
+                    f"{layer_sizes}."
+                )
+            layer_tensor_size_list = tuple(
+                size
+                for entry, _ in members
+                for size, _ in self._entry_layer_schema(entry, bundle.layers[0])
+            )
             if for_io:
                 rows = [list() for _ in page_keys]
-                for entry, transfer in members:
-                    entry_rows, schema = self._entry_layer_rows(entry, transfer, layer)
-                    if not entry_rows or not schema:
-                        raise ValueError(
-                            f"UCM bundle {bundle.name} is missing {entry.name} layer={layer}."
+                for layer in bundle.layers:
+                    for entry, transfer in members:
+                        entry_rows, schema = self._entry_layer_rows(
+                            entry, transfer, layer
                         )
-                    for row, entry_row in zip(rows, entry_rows):
-                        row.extend(entry_row)
+                        if not entry_rows or not schema:
+                            raise ValueError(
+                                f"UCM bundle {bundle.name} is missing "
+                                f"{entry.name} layer={layer}."
+                            )
+                        for row, entry_row in zip(rows, entry_rows):
+                            row.extend(entry_row)
                 addresses = tuple(tuple(row) for row in rows)
                 if any(len(row) != len(fragments) for row in addresses):
                     raise ValueError(
-                        f"UCM bundle {bundle.name} layer={layer} address/schema mismatch."
+                        f"UCM bundle {bundle.name} page address/schema mismatch."
                     )
             else:
                 addresses = tuple(() for _ in page_keys)
@@ -394,7 +420,9 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     store_group=bundle.name,
                     source_pool=str(bundle.source_pool),
                     pools=tuple(str(entry.name) for entry in bundle.entries),
-                    layer=layer,
+                    layers=bundle.layers,
+                    shard_size=layer_sizes[0],
+                    tensor_size_list=layer_tensor_size_list,
                     page_keys=page_keys,
                     addresses=addresses,
                     fragments=fragments,
@@ -417,11 +445,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
         page_keys = list(kv_transfer.keys or ()) if kv_transfer is not None else []
         if not page_keys:
             return []
-        lookup_transfers = [
-            layer_transfer
-            for layer in range(self.num_layers)
-            for layer_transfer in self._layer_transfers(expanded, layer, for_io=False)
-        ]
+        lookup_transfers = self._page_transfers(expanded, for_io=False)
         if not lookup_transfers:
             return []
         result = self.adapter.lookup(lookup_transfers, page_keys)
@@ -489,16 +513,14 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 counter_index, pending, ready_event = task
                 try:
                     ready_event.synchronize()
+                    page_transfers = [
+                        transfer
+                        for request in pending.values()
+                        for transfer in self._page_transfers(request, for_io=True)
+                    ]
+                    if page_transfers:
+                        self._wait_tasks(self.adapter.submit_load(page_transfers))
                     for layer in range(self.num_layers):
-                        layer_transfers = [
-                            transfer
-                            for request in pending.values()
-                            for transfer in self._layer_transfers(
-                                request, layer, for_io=True
-                            )
-                        ]
-                        if layer_transfers:
-                            self._wait_tasks(self.adapter.submit_load(layer_transfers))
                         self.layer_done_counter.complete(counter_index, layer)
                 except BaseException as error:
                     self.layer_done_counter.fail(counter_index, error)
@@ -529,13 +551,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     return
                 expanded, ready_event = task
                 ready_event.synchronize()
-                transfers = [
-                    layer_transfer
-                    for layer in range(self.num_layers)
-                    for layer_transfer in self._layer_transfers(
-                        expanded, layer, for_io=True
-                    )
-                ]
+                transfers = self._page_transfers(expanded, for_io=True)
                 self._wait_tasks(self.adapter.submit_offload(transfers))
                 self.stats["offload"] += 1
                 self._offload_results.put(True)
