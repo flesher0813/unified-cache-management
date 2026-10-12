@@ -34,7 +34,9 @@ class UcmLayerTransfer:
     store_group: str
     source_pool: str
     pools: tuple[str, ...]
-    layer: int
+    layers: tuple[int, ...]
+    shard_size: int
+    tensor_size_list: tuple[int, ...]
     page_keys: tuple[str, ...]
     addresses: tuple[tuple[int, ...], ...]
     fragments: tuple[tuple[int, int], ...]
@@ -55,9 +57,8 @@ class UcmDirectStoreAdapter:
     """Map SGLang device-address rows to UCM Store V1 operations.
 
     One Store is created during device-pool registration for each linker-selected
-    ``store_group``. A Store block holds every fixed fragment for one page and
-    one logical layer. Thus a DSA KV/indexer group becomes one composite UCM
-    block.
+    ``store_group``. A Store block holds every fixed fragment for one page across
+    the group's full logical-layer range.
     """
 
     def __init__(
@@ -139,17 +140,14 @@ class UcmDirectStoreAdapter:
                 page_sizes = {member.page_size for member in members}
                 if len(page_sizes) != 1:
                     raise ValueError(f"inconsistent page sizes: {sorted(page_sizes)}")
-                composite_schemas = {
-                    tuple(
-                        (int(size), 0)
-                        for member in sorted(members, key=lambda item: item.name)
-                        for size, _ in schemas_by_member[member.name][layer]
-                    )
+                schema = tuple(
+                    (int(size), 0)
                     for layer in layers
-                }
-                if len(composite_schemas) != 1:
-                    raise ValueError("variable per-layer schemas")
-                schema = next(iter(composite_schemas), ())
+                    for member in sorted(members, key=lambda item: item.name)
+                    for size, _ in schemas_by_member[member.name][layer]
+                )
+                if not schema:
+                    raise ValueError("no layer fragments")
                 device_buffers = tuple(
                     dict.fromkeys(
                         buffer for member in members for buffer in member.device_buffers
@@ -159,7 +157,8 @@ class UcmDirectStoreAdapter:
                     raise ValueError("no device buffers")
                 logger.info(
                     "UCM register pool group=%s source=%s pools=%s page_size=%d "
-                    "layers=%s tensors=%d bytes=%d buffers=%d buffer_bytes=%d.",
+                    "layers=%s tensors=%d page_block_bytes=%d buffers=%d "
+                    "buffer_bytes=%d.",
                     group,
                     members[0].source_pool,
                     [member.name for member in members],
@@ -170,7 +169,19 @@ class UcmDirectStoreAdapter:
                     len(device_buffers),
                     sum(size for _, size in device_buffers),
                 )
-                self._ensure_store_schema(group, schema, device_buffers)
+                layer_tensor_size_list = tuple(
+                    size
+                    for member in sorted(members, key=lambda item: item.name)
+                    for size, _ in schemas_by_member[member.name][layers[0]]
+                )
+                layer_shard_size = sum(layer_tensor_size_list)
+                self._ensure_store_schema(
+                    group,
+                    schema,
+                    device_buffers,
+                    shard_size=layer_shard_size,
+                    tensor_size_list=layer_tensor_size_list,
+                )
             except Exception:
                 logger.exception(
                     "Failed to register UCM pool group=%s source=%s pools=%s.",
@@ -201,10 +212,9 @@ class UcmDirectStoreAdapter:
             raise ValueError(
                 f"UCM transfer {transfer.store_group} has an invalid fragment schema."
             )
-        # Range offsets select a source layer in SGLang's packed pool. The UCM
-        # block already represents one layer, so its fixed tensor layout is
-        # determined by fragment sizes; each address points at that layer's
-        # actual range.
+        # Range offsets select each source layer in SGLang's packed pool. The
+        # UCM block represents one full page, so its fixed tensor layout is the
+        # ordered fragments for every layer in the page.
         return tuple((size, 0) for size, _ in raw_schema)
 
     def _namespaced_backends(self, group: str) -> list[str]:
@@ -230,6 +240,9 @@ class UcmDirectStoreAdapter:
         store_group: str,
         schema: tuple[tuple[int, int], ...],
         device_buffers: tuple[tuple[int, int], ...] = (),
+        *,
+        shard_size: int,
+        tensor_size_list: tuple[int, ...],
     ) -> UcmKVStoreBaseV1:
         with self._store_lock:
             schema = tuple((int(size), 0) for size, _ in schema)
@@ -245,11 +258,20 @@ class UcmDirectStoreAdapter:
             if existing is not None:
                 return existing
 
-            tensor_size_list = [size for size, _ in schema]
-            payload_size = sum(tensor_size_list)
-            store_size = payload_size
-            if self._store_config.get("io_direct", False):
-                store_size = (payload_size + 4095) // 4096 * 4096
+            tensor_size_list = [int(size) for size in tensor_size_list]
+            payload_size = sum(size for size, _ in schema)
+            if not tensor_size_list or sum(tensor_size_list) != shard_size:
+                raise ValueError(
+                    "Store tensor_size_list must describe exactly one shard: "
+                    f"group={store_group} tensor_size_list={tensor_size_list} "
+                    f"shard_size={shard_size}."
+                )
+            if shard_size <= 0 or payload_size % shard_size:
+                raise ValueError(
+                    "Store block_size must be an integer number of shards: "
+                    f"group={store_group} shard_size={shard_size} "
+                    f"block_size={payload_size}."
+                )
             store_config = copy.deepcopy(self._store_config)
             store_config["storage_backends"] = self._namespaced_backends(store_group)
             store_config["unique_id"] = _safe_name(
@@ -257,9 +279,13 @@ class UcmDirectStoreAdapter:
             )
             store_config["tensor_layout"] = "sglang_l1"
             store_config["tensor_size_list"] = tensor_size_list
-            store_config["tensor_size"] = payload_size
-            store_config["shard_size"] = store_size
-            store_config["block_size"] = store_size
+            # CacheStore treats a scalar tensor_size as higher priority than
+            # tensor_size_list. Do not collapse a composite DSA payload such
+            # as [indexer_bytes, kv_bytes] into one contiguous tensor here.
+            # Pipeline backends that need a scalar set it on their private
+            # downstream configuration (for example, Posix uses shard_size).
+            store_config["shard_size"] = shard_size
+            store_config["block_size"] = payload_size
             store_config["device_id"] = int(self._identity.get("device_id", 0))
             store_config["gpu_kv_buffer_addrs"] = [
                 address for address, _ in device_buffers
@@ -271,14 +297,16 @@ class UcmDirectStoreAdapter:
                 else 1
             )
             logger.info(
-                "Creating SGLang UCM Store group=%s fragments=%d payload=%d "
-                "store=%d buffers=%d.",
+                "Creating SGLang UCM Store group=%s fragments=%d "
+                "page_shard_bytes=%d page_block_bytes=%d layers=%d buffers=%d.",
                 store_group,
                 len(tensor_size_list),
+                shard_size,
                 payload_size,
-                store_size,
+                payload_size // shard_size,
                 len(device_buffers),
             )
+            logger.info(f"SGLang UCM Store config: {store_config}")
             store = UcmConnectorFactoryV1.create_connector(
                 self._connector_name, store_config, self._module_path
             )
@@ -286,13 +314,18 @@ class UcmDirectStoreAdapter:
             return store
 
     def _ensure_store(self, transfer: UcmLayerTransfer) -> UcmKVStoreBaseV1:
-        return self._ensure_store_schema(transfer.store_group, self._schema(transfer))
+        return self._ensure_store_schema(
+            transfer.store_group,
+            self._schema(transfer),
+            shard_size=transfer.shard_size,
+            tensor_size_list=transfer.tensor_size_list,
+        )
 
     def _block_ids(
         self, transfer: UcmLayerTransfer, page_keys: Iterable[str] | None = None
     ) -> list[bytes]:
         keys = transfer.page_keys if page_keys is None else tuple(page_keys)
-        prefix = f"{self._identity_suffix()}|{transfer.store_group}|l{transfer.layer}|"
+        prefix = f"{self._identity_suffix()}|{transfer.store_group}|"
         return [hashlib.md5(f"{prefix}{key}".encode("utf-8")).digest() for key in keys]
 
     @staticmethod
@@ -337,11 +370,11 @@ class UcmDirectStoreAdapter:
                     return []
             except Exception:
                 logger.exception(
-                    "UCM lookup failed: group=%s source=%s layer=%d pools=%s "
+                    "UCM lookup failed: group=%s source=%s layers=%s pools=%s "
                     "pages=%d.",
                     transfer.store_group,
                     transfer.source_pool,
-                    transfer.layer,
+                    transfer.layers,
                     transfer.pools,
                     len(page_keys),
                 )
@@ -369,12 +402,12 @@ class UcmDirectStoreAdapter:
                 tasks.append(_StoreTask(store, task))
             except Exception:
                 logger.exception(
-                    "UCM %s submit failed: group=%s source=%s layer=%d pools=%s "
+                    "UCM %s submit failed: group=%s source=%s layers=%s pools=%s "
                     "pages=%d.",
                     "offload" if is_offload else "load",
                     transfer.store_group,
                     transfer.source_pool,
-                    transfer.layer,
+                    transfer.layers,
                     transfer.pools,
                     len(transfer.page_keys),
                 )
