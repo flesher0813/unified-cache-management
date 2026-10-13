@@ -392,14 +392,40 @@ class UcmDirectStoreAdapter:
                 schema = self._schema(transfer)
                 if any(len(row) != len(schema) for row in transfer.addresses):
                     raise ValueError("address/schema mismatch")
+                tensor_count = len(transfer.tensor_size_list)
+                if (
+                    not tensor_count
+                    or len(schema) != len(transfer.layers) * tensor_count
+                ):
+                    raise ValueError("layer count/address schema mismatch")
+                if transfer.shard_size != sum(transfer.tensor_size_list):
+                    raise ValueError("tensor sizes do not match shard size")
+                layer_rows = []
+                for shard_index, layer in enumerate(transfer.layers):
+                    start = shard_index * tensor_count
+                    stop = start + tensor_count
+                    sizes = tuple(size for size, _ in schema[start:stop])
+                    if sizes != transfer.tensor_size_list:
+                        raise ValueError(
+                            f"UCM group {transfer.store_group} layer={layer} "
+                            "does not match the Store shard schema."
+                        )
+                    layer_rows.append(
+                        (
+                            shard_index,
+                            tuple(tuple(row[start:stop]) for row in transfer.addresses),
+                        )
+                    )
                 store = self._ensure_store(transfer)
                 operation = store.dump_data if is_offload else store.load_data
-                task = operation(
-                    self._block_ids(transfer),
-                    [0] * len(transfer.page_keys),
-                    [list(row) for row in transfer.addresses],
-                )
-                tasks.append(_StoreTask(store, task))
+                block_ids = tuple(self._block_ids(transfer))
+                for shard_index, rows in layer_rows:
+                    task = operation(
+                        list(block_ids),
+                        [shard_index] * len(block_ids),
+                        [list(row) for row in rows],
+                    )
+                    tasks.append(_StoreTask(store, task))
             except Exception:
                 logger.exception(
                     "UCM %s submit failed: group=%s source=%s layers=%s pools=%s "
