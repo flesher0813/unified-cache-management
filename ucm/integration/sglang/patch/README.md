@@ -11,10 +11,13 @@ the `ucm` backend branch. Mooncake and Mori retain their upstream selection,
 initialization, and default behavior. The UCM store adapter in
 `ucm_direct_store_adapter.py` reads the single `ucm_connectors` entry from
 `UNIFIEDCACHE_CONFIG_FILE` and creates one UCM Store per linker-selected
-device-pool group. It namespaces configured storage backends by model/parallel
-identity and Store group, then stores one logical page/layer payload per UCM
-block. DSA KV and INDEXER data share one composite block when they belong to
-the same pool group.
+device-pool group. It creates one backend subdirectory per Store, named from
+the physical pool names in that Store (for example, `kv`, `swa`, or
+`deepseek_v4_c128`). If the same physical pool set is split into multiple
+Stores, a layer-range or layout suffix keeps their directories separate. Model
+identity remains part of each block ID, so different models do not hit the
+same cached prompt even when they share a backend directory. DSA KV and
+INDEXER data share one composite block when they belong to the same pool group.
 
 Edit the local configuration block in
 `scripts/launch_sglang_ucm_linker.sh`, then run it to start SGLang with the

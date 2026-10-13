@@ -219,6 +219,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 metadata.append(
                     UcmPoolMetadata(
                         name=f"{bundle.name}:{entry.name}",
+                        pool_name=str(entry.name),
                         source_pool=str(bundle.source_pool),
                         store_group=bundle.name,
                         page_size=entry.page_size,
@@ -524,9 +525,13 @@ class UcmDirectLinker(UnifiedCacheLinker):
                         for request in pending.values()
                         for transfer in self._page_transfers(request, for_io=True)
                     ]
-                    if page_transfers:
-                        self._wait_tasks(self.adapter.submit_load(page_transfers))
                     for layer in range(self.num_layers):
+                        if page_transfers:
+                            # A logical layer can span several pool bundles and
+                            # requests; release it only after every shard finishes.
+                            self._wait_tasks(
+                                self.adapter.submit_load_layer(page_transfers, layer)
+                            )
                         self.layer_done_counter.complete(counter_index, layer)
                 except BaseException as error:
                     self.layer_done_counter.fail(counter_index, error)
