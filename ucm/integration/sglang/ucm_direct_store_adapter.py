@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class UcmPoolMetadata:
     name: str
+    pool_name: str
     source_pool: str
     store_group: str
     page_size: int
@@ -192,8 +193,11 @@ class UcmDirectStoreAdapter:
                 raise
 
     def _identity_suffix(self) -> str:
+        model = str(self._identity.get("model") or "model")
+        model_slug = _safe_name(model).strip("._-")[:48] or "model"
+        model_fingerprint = hashlib.sha256(model.encode("utf-8")).hexdigest()[:16]
         parts = [
-            _safe_name(self._identity.get("model") or "model"),
+            f"{model_slug}-{model_fingerprint}",
             f"pp{int(self._identity.get('pp_rank', 0))}",
             f"cp{int(self._identity.get('attn_cp_rank', 0))}",
         ]
@@ -227,10 +231,80 @@ class UcmDirectStoreAdapter:
             raise ValueError("UCM connector config requires storage_backends.")
         if not roots:
             raise ValueError("UCM connector config has no storage_backends.")
-        namespace = _safe_name(f"sglang_l1/{self._identity_suffix()}/{group}")
+        members = [
+            pool for pool in self._pool_metadata.values() if pool.store_group == group
+        ]
+        if not members:
+            raise ValueError(f"UCM store group {group} has no registered pools.")
+        pool_order = {"kv": 0, "indexer": 1, "swa": 2, "mamba": 3}
+        pool_names = tuple(
+            sorted(
+                {_safe_name(pool.pool_name).strip("._-").lower() for pool in members},
+                key=lambda name: (pool_order.get(name, 4), name),
+            )
+        )
+        if not pool_names or any(not name for name in pool_names):
+            raise ValueError(
+                f"UCM store group {group} has an empty physical pool name."
+            )
+        directory_name = "_".join(pool_names)
+
+        # Usually a physical pool set maps to one Store and gets a simple name
+        # such as ``kv`` or ``deepseek_v4_c128``. If mapping/schema splits it
+        # into multiple Stores, add a layout suffix so each Store has its own
+        # directory without introducing model or parallel-rank identity.
+        pools_by_group: dict[str, list[UcmPoolMetadata]] = {}
+        for pool in self._pool_metadata.values():
+            pools_by_group.setdefault(pool.store_group, []).append(pool)
+        matching_groups = {
+            other_group: other_members
+            for other_group, other_members in pools_by_group.items()
+            if tuple(
+                sorted(
+                    {
+                        _safe_name(candidate.pool_name).strip("._-").lower()
+                        for candidate in other_members
+                    },
+                    key=lambda name: (pool_order.get(name, 4), name),
+                )
+            )
+            == pool_names
+        }
+        if len(matching_groups) > 1:
+            layer_ids = tuple(
+                sorted({layer for pool in members for layer, _ in pool.layer_schemas})
+            )
+            if layer_ids:
+                contiguous = layer_ids == tuple(range(layer_ids[0], layer_ids[-1] + 1))
+                layer_label = (
+                    f"{layer_ids[0]}-{layer_ids[-1]}"
+                    if contiguous
+                    else "_".join(map(str, layer_ids))
+                )
+                directory_name = f"{directory_name}_layers_{layer_label}"
+            # Layer ranges normally distinguish split Stores. If the same pool
+            # set and layer range still collide, use a stable layout fingerprint.
+            if (
+                sum(
+                    tuple(
+                        sorted(
+                            {
+                                layer
+                                for pool in other_members
+                                for layer, _ in pool.layer_schemas
+                            }
+                        )
+                    )
+                    == layer_ids
+                    for other_members in matching_groups.values()
+                )
+                > 1
+            ):
+                fingerprint = hashlib.sha256(group.encode("utf-8")).hexdigest()[:10]
+                directory_name = f"{directory_name}_layout_{fingerprint}"
         backends = []
         for root in roots:
-            backend = Path(root) / namespace
+            backend = Path(root) / directory_name
             backend.mkdir(parents=True, exist_ok=True)
             backends.append(str(backend))
         return backends
@@ -382,10 +456,16 @@ class UcmDirectStoreAdapter:
         return candidates
 
     def _submit(
-        self, transfers: list[UcmLayerTransfer], *, is_offload: bool
+        self,
+        transfers: list[UcmLayerTransfer],
+        *,
+        is_offload: bool,
+        logical_layer: int | None = None,
     ) -> list[_StoreTask]:
         tasks: list[_StoreTask] = []
         for transfer in transfers:
+            if logical_layer is not None and logical_layer not in transfer.layers:
+                continue
             try:
                 if len(transfer.page_keys) != len(transfer.addresses):
                     raise ValueError("mismatched page keys and addresses")
@@ -420,6 +500,13 @@ class UcmDirectStoreAdapter:
                 operation = store.dump_data if is_offload else store.load_data
                 block_ids = tuple(self._block_ids(transfer))
                 for shard_index, rows in layer_rows:
+                    # The Store index is local to this bundle; transfer.layers
+                    # contains the corresponding SGLang logical layer.
+                    if (
+                        logical_layer is not None
+                        and transfer.layers[shard_index] != logical_layer
+                    ):
+                        continue
                     task = operation(
                         list(block_ids),
                         [shard_index] * len(block_ids),
@@ -442,6 +529,11 @@ class UcmDirectStoreAdapter:
 
     def submit_load(self, transfers: list[UcmLayerTransfer]) -> list[_StoreTask]:
         return self._submit(transfers, is_offload=False)
+
+    def submit_load_layer(
+        self, transfers: list[UcmLayerTransfer], logical_layer: int
+    ) -> list[_StoreTask]:
+        return self._submit(transfers, is_offload=False, logical_layer=logical_layer)
 
     def submit_offload(self, transfers: list[UcmLayerTransfer]) -> list[_StoreTask]:
         return self._submit(transfers, is_offload=True)
