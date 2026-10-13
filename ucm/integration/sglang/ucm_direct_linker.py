@@ -497,12 +497,10 @@ class UcmDirectLinker(UnifiedCacheLinker):
         return counter_index
 
     def _wait_tasks(self, tasks: object) -> None:
+        # Wait consumes the CacheStore task handle after returning. Do not call
+        # check() afterwards: CacheStore would report -50005 (NotFound) for the
+        # already-reaped task even when the transfer completed successfully.
         self.adapter.wait(tasks)
-        if tasks is None:
-            return
-        iterable = tasks if isinstance(tasks, (list, tuple, set)) else (tasks,)
-        if not all(self.adapter.check(task) for task in iterable):
-            raise RuntimeError("UCM Store reported an unsuccessful transfer task.")
 
     def _load_worker(self) -> None:
         while True:
