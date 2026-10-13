@@ -236,19 +236,27 @@ class UcmDirectLinker(UnifiedCacheLinker):
         self,
     ) -> tuple[_PoolBundle, ...]:
         """Group entries that can share one page/layer Store block schema."""
-        grouped: dict[tuple[PoolName, tuple[int, ...]], list[DevicePoolEntry]] = {}
+        grouped: dict[
+            tuple[PoolName, tuple[tuple[int, int | tuple[int, ...]], ...]],
+            list[DevicePoolEntry],
+        ] = {}
         for entry in self.pools.values():
-            layers = tuple(sorted(entry.layer_mapping))
+            mapping = tuple(
+                (layer, mapped if isinstance(mapped, int) else tuple(mapped))
+                for layer, mapped in sorted(entry.layer_mapping.items())
+            )
+            layers = tuple(layer for layer, _ in mapping)
             if not layers:
                 continue
             if any(layer < 0 or layer >= self.num_layers for layer in layers):
                 raise ValueError(
                     f"UCM pool {entry.name} has out-of-range layers {layers}."
                 )
-            grouped.setdefault((entry.indices_from_pool, layers), []).append(entry)
+            grouped.setdefault((entry.indices_from_pool, mapping), []).append(entry)
 
         bundles = []
-        for (source_pool, layers), entries in grouped.items():
+        for (source_pool, mapping), entries in grouped.items():
+            layers = tuple(layer for layer, _ in mapping)
             ordered = tuple(sorted(entries, key=lambda entry: str(entry.name)))
             by_schema: dict[tuple[int, ...], list[int]] = {}
             for layer in layers:
@@ -426,7 +434,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     page_keys=page_keys,
                     addresses=addresses,
                     fragments=fragments,
-                    hit_policy=str(hit_policy),
+                    hit_policy=str(getattr(hit_policy, "value", hit_policy)),
                 )
             )
         return result
