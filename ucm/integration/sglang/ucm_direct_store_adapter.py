@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import logging
 import re
 import threading
@@ -205,6 +206,49 @@ class UcmDirectStoreAdapter:
             parts.append(f"tp{int(self._identity.get('tp_rank', 0))}")
         return "_".join(parts)
 
+    def _store_unique_id(
+        self,
+        store_group: str,
+        *,
+        schema: tuple[tuple[int, int], ...],
+        shard_size: int,
+        tensor_size_list: tuple[int, ...],
+        block_size: int,
+    ) -> str:
+        """Return a bounded, deterministic ID for Cache/Fake shm objects.
+
+        The C++ backends prepend ``uc_shm_cache_`` or ``uc_shm_fake_`` to this
+        value.  Hash the complete sharing identity and layout instead of
+        passing the long layer-expanded ``store_group`` directly, while
+        preserving the full group in persistent block IDs.
+        """
+        identity = {
+            "model": str(self._identity.get("model") or "model"),
+            "pp_rank": int(self._identity.get("pp_rank", 0)),
+            "pp_size": int(self._identity.get("pp_size", 1)),
+            "cp_rank": int(self._identity.get("attn_cp_rank", 0)),
+            "cp_size": int(self._identity.get("attn_cp_size", 1)),
+            "tp_size": int(self._identity.get("tp_size", 1)),
+            "rank_replicated": bool(self._identity.get("rank_replicated", False)),
+        }
+        # Replicated TP ranks intentionally share one shm object.  Non-
+        # replicated ranks require separate namespaces, matching _identity_suffix.
+        if not identity["rank_replicated"]:
+            identity["tp_rank"] = int(self._identity.get("tp_rank", 0))
+        layout = {
+            "store_group": str(store_group),
+            "schema": [[int(size), int(offset)] for size, offset in schema],
+            "shard_size": int(shard_size),
+            "tensor_size_list": [int(size) for size in tensor_size_list],
+            "block_size": int(block_size),
+        }
+        canonical = json.dumps(
+            {"identity": identity, "layout": layout},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:32]
+
     @staticmethod
     def _schema(transfer: UcmLayerTransfer) -> tuple[tuple[int, int], ...]:
         if not transfer.fragments:
@@ -348,8 +392,15 @@ class UcmDirectStoreAdapter:
                 )
             store_config = copy.deepcopy(self._store_config)
             store_config["storage_backends"] = self._namespaced_backends(store_group)
-            store_config["unique_id"] = _safe_name(
-                f"{self._identity_suffix()}_{store_group}"
+            # ``unique_id`` is used in Cache/Fake POSIX shared-memory names.
+            # Keep it bounded and include the actual layout so incompatible
+            # Stores cannot accidentally attach to the same shared buffer.
+            store_config["unique_id"] = self._store_unique_id(
+                store_group,
+                schema=schema,
+                shard_size=shard_size,
+                tensor_size_list=tuple(tensor_size_list),
+                block_size=payload_size,
             )
             store_config["tensor_layout"] = "sglang_l1"
             store_config["tensor_size_list"] = tensor_size_list
