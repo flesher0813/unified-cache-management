@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import numpy as np
 import yaml
 
 from ucm.store.factory_v1 import UcmConnectorFactoryV1
@@ -40,7 +41,9 @@ class UcmLayerTransfer:
     shard_size: int
     tensor_size_list: tuple[int, ...]
     page_keys: tuple[str, ...]
-    addresses: tuple[tuple[int, ...], ...]
+    # I/O uses a contiguous (layer, page, fragment) uint64 array. Lookup
+    # retains empty per-page tuples because it does not materialize pointers.
+    addresses: tuple[tuple[int, ...], ...] | np.ndarray
     fragments: tuple[tuple[int, int], ...]
     hit_policy: str = "all_pages"
 
@@ -521,11 +524,24 @@ class UcmDirectStoreAdapter:
         prepared: list[_PreparedStoreTransfer] = []
         for transfer in transfers:
             try:
-                if len(transfer.page_keys) != len(transfer.addresses):
-                    raise ValueError("mismatched page keys and addresses")
                 schema = self._schema(transfer)
-                if any(len(row) != len(schema) for row in transfer.addresses):
-                    raise ValueError("address/schema mismatch")
+                if isinstance(transfer.addresses, np.ndarray):
+                    if (
+                        transfer.addresses.shape
+                        != (
+                            len(transfer.layers),
+                            len(transfer.page_keys),
+                            len(transfer.tensor_size_list),
+                        )
+                        or transfer.addresses.dtype != np.uint64
+                        or not transfer.addresses.flags.c_contiguous
+                    ):
+                        raise ValueError("address/schema mismatch")
+                else:
+                    if len(transfer.page_keys) != len(transfer.addresses):
+                        raise ValueError("mismatched page keys and addresses")
+                    if any(len(row) != len(schema) for row in transfer.addresses):
+                        raise ValueError("address/schema mismatch")
                 tensor_count = len(transfer.tensor_size_list)
                 if (
                     not tensor_count
@@ -603,10 +619,15 @@ class UcmDirectStoreAdapter:
                     # contains the corresponding SGLang logical layer.
                     start = shard_index * item.tensor_count
                     stop = start + item.tensor_count
+                    addresses = (
+                        transfer.addresses[shard_index]
+                        if isinstance(transfer.addresses, np.ndarray)
+                        else [list(row[start:stop]) for row in transfer.addresses]
+                    )
                     task = operation(
                         list(item.block_ids),
                         [shard_index] * len(item.block_ids),
-                        [list(row[start:stop]) for row in transfer.addresses],
+                        addresses,
                     )
                     tasks.append(_StoreTask(item.store, task))
             except Exception:

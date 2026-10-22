@@ -148,6 +148,8 @@ class _TransferBuildTimings:
     schema_ms: float = 0.0
     locations_ms: float = 0.0
     layer_meta_ms: float = 0.0
+    # Kept in the log for before/after comparison; array I/O no longer
+    # converts address rows to Python lists.
     row_convert_ms: float = 0.0
     address_assemble_ms: float = 0.0
     layer_meta_calls: int = 0
@@ -409,10 +411,10 @@ class UcmDirectLinker(UnifiedCacheLinker):
         layer: int,
         locations: np.ndarray,
         timings: _TransferBuildTimings | None = None,
-    ) -> tuple[list[list[int]], tuple[tuple[int, int], ...]]:
+    ) -> tuple[np.ndarray, tuple[tuple[int, int], ...]]:
         layout = self._layer_pointer_layouts.get((entry.name, layer))
         if layout is None:
-            return [], ()
+            return np.empty((0, 0), dtype=np.uint64), ()
         page_count = len(transfer.keys or ())
         if not entry.packed and len(layout.schema) != 1:
             raise ValueError(
@@ -429,16 +431,12 @@ class UcmDirectLinker(UnifiedCacheLinker):
         if timings is not None:
             timings.layer_meta_ms += (time.perf_counter() - meta_start) * 1000
             timings.layer_meta_calls += 1
-        row_start = time.perf_counter() if timings is not None else 0.0
-        pointers = pointer_matrix.tolist()
-        if len(pointers) != page_count:
+        if pointer_matrix.shape[0] != page_count:
             raise ValueError(
                 f"UCM bundle requires one address row per page for {entry.name}: "
-                f"pointers={len(pointers)} pages={page_count}."
+                f"pointers={pointer_matrix.shape[0]} pages={page_count}."
             )
-        if timings is not None:
-            timings.row_convert_ms += (time.perf_counter() - row_start) * 1000
-        return pointers, layout.schema
+        return pointer_matrix, layout.schema
 
     def _page_transfers(
         self,
@@ -513,15 +511,31 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     timings.locations_ms += (
                         time.perf_counter() - locations_start
                     ) * 1000
-                rows = [list() for _ in page_keys]
-                for layer in bundle.layers:
+                assemble_start = time.perf_counter() if timings is not None else 0.0
+                # Each layer slice is contiguous and can be passed to Store
+                # without converting every page's pointers to Python lists.
+                tensor_count = len(layer_tensor_size_list)
+                if len(fragments) != len(bundle.layers) * tensor_count:
+                    raise ValueError(
+                        f"UCM bundle {bundle.name} has inconsistent fragment counts."
+                    )
+                addresses = np.empty(
+                    (len(bundle.layers), len(page_keys), tensor_count),
+                    dtype=np.uint64,
+                )
+                if timings is not None:
+                    timings.address_assemble_ms += (
+                        time.perf_counter() - assemble_start
+                    ) * 1000
+                for layer_index, layer in enumerate(bundle.layers):
+                    column = 0
                     for (entry, transfer), locations in zip(
                         members, prepared_locations
                     ):
                         entry_rows, schema = self._entry_layer_rows(
                             entry, transfer, layer, locations, timings
                         )
-                        if not entry_rows or not schema:
+                        if entry_rows.shape != (len(page_keys), len(schema)) or not schema:
                             raise ValueError(
                                 f"UCM bundle {bundle.name} is missing "
                                 f"{entry.name} layer={layer}."
@@ -529,22 +543,17 @@ class UcmDirectLinker(UnifiedCacheLinker):
                         assemble_start = (
                             time.perf_counter() if timings is not None else 0.0
                         )
-                        for row, entry_row in zip(rows, entry_rows):
-                            row.extend(entry_row)
+                        next_column = column + len(schema)
+                        addresses[layer_index, :, column:next_column] = entry_rows
+                        column = next_column
                         if timings is not None:
                             timings.address_assemble_ms += (
                                 time.perf_counter() - assemble_start
                             ) * 1000
-                assemble_start = time.perf_counter() if timings is not None else 0.0
-                addresses = tuple(tuple(row) for row in rows)
-                if any(len(row) != len(fragments) for row in addresses):
-                    raise ValueError(
-                        f"UCM bundle {bundle.name} page address/schema mismatch."
-                    )
-                if timings is not None:
-                    timings.address_assemble_ms += (
-                        time.perf_counter() - assemble_start
-                    ) * 1000
+                    if column != tensor_count:
+                        raise ValueError(
+                            f"UCM bundle {bundle.name} page address/schema mismatch."
+                        )
             else:
                 addresses = tuple(() for _ in page_keys)
             result.append(
