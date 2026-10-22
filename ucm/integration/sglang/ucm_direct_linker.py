@@ -39,8 +39,9 @@ device_module = get_device_module()
 class LayerWiseLoadCounter:
     """Completion counter consumed by SGLang's layer-transfer hooks."""
 
-    def __init__(self, num_layers: int):
+    def __init__(self, num_layers: int, tp_rank: int):
         self.num_layers = num_layers
+        self.tp_rank = tp_rank
         self.producer_index = -1
         self.consumer_index = -1
         self.futures: dict[int, list[Future]] = {}
@@ -85,11 +86,25 @@ class LayerWiseLoadCounter:
             raise IndexError(
                 f"UCM wait has invalid layer {threshold} for batch {index}."
             )
+        future = futures[threshold]
+        pending_before_wait = not future.done()
+        wait_start = time.perf_counter()
         try:
-            futures[threshold].result()
+            future.result()
         except BaseException as error:
             raise RuntimeError("UCM layer-wise KV load failed.") from error
         finally:
+            wait_ms = (time.perf_counter() - wait_start) * 1000
+            if wait_ms >= 1.0:
+                logger.info(
+                    "UCM linker wait_until tp_rank=%d batch=%d layer=%d "
+                    "pending_before_wait=%s wait_ms=%.3f",
+                    self.tp_rank,
+                    index,
+                    threshold,
+                    pending_before_wait,
+                    wait_ms,
+                )
             if threshold == self.num_layers - 1:
                 with self._lock:
                     self.futures.pop(index, None)
@@ -148,7 +163,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
         self._pending_loads: dict[str, list[PoolTransfer]] = {}
         self._pending_lock = threading.Lock()
         self._load_queue: Queue[
-            tuple[int, dict[str, list[PoolTransfer]], object] | None
+            tuple[int, dict[str, list[PoolTransfer]], object, float] | None
         ] = Queue()
         self._completed_loads: Queue[list[str]] = Queue()
         self._offload_queue: Queue[tuple[list[PoolTransfer], object] | None] = Queue()
@@ -176,7 +191,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
             )
             raise
 
-        self.layer_done_counter = LayerWiseLoadCounter(self.num_layers)
+        self.layer_done_counter = LayerWiseLoadCounter(self.num_layers, self._tp_rank)
         if PoolName.MAMBA in self.pools:
             params.req_to_token_pool.register_layer_transfer_counter(
                 self.layer_done_counter
@@ -501,7 +516,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
         counter_index = self.layer_done_counter.update_producer()
         ready_event = device_module.Event()
         ready_event.record()
-        self._load_queue.put((counter_index, pending, ready_event))
+        self._load_queue.put((counter_index, pending, ready_event, time.perf_counter()))
         self.stats["load"] += len(pending)
         return counter_index
 
@@ -517,22 +532,82 @@ class UcmDirectLinker(UnifiedCacheLinker):
             try:
                 if task is None:
                     return
-                counter_index, pending, ready_event = task
+                counter_index, pending, ready_event, queued_at = task
                 try:
+                    worker_started = time.perf_counter()
+                    batch_start = worker_started
+                    queue_wait_ms = (worker_started - queued_at) * 1000
+                    ready_start = worker_started
                     ready_event.synchronize()
+                    ready_wait_ms = (time.perf_counter() - ready_start) * 1000
+                    transfer_build_start = time.perf_counter()
                     page_transfers = [
                         transfer
                         for request in pending.values()
                         for transfer in self._page_transfers(request, for_io=True)
                     ]
+                    transfer_build_ms = (
+                        time.perf_counter() - transfer_build_start
+                    ) * 1000
+                    page_count = sum(
+                        len(transfer.page_keys) for transfer in page_transfers
+                    )
+                    if max(queue_wait_ms, ready_wait_ms, transfer_build_ms) >= 1.0:
+                        logger.info(
+                            "UCM linker load batch begin tp_rank=%d batch=%d requests=%d "
+                            "transfers=%d transfer_pages=%d queue_wait_ms=%.3f "
+                            "ready_event_ms=%.3f transfer_build_ms=%.3f",
+                            self._tp_rank,
+                            counter_index,
+                            len(pending),
+                            len(page_transfers),
+                            page_count,
+                            queue_wait_ms,
+                            ready_wait_ms,
+                            transfer_build_ms,
+                        )
                     for layer in range(self.num_layers):
                         if page_transfers:
                             # A logical layer can span several pool bundles and
                             # requests; release it only after every shard finishes.
-                            self._wait_tasks(
-                                self.adapter.submit_load_layer(page_transfers, layer)
+                            layer_start = time.perf_counter()
+                            submit_start = layer_start
+                            tasks = self.adapter.submit_load_layer(
+                                page_transfers, layer
                             )
+                            submit_ms = (time.perf_counter() - submit_start) * 1000
+                            store_wait_start = time.perf_counter()
+                            self._wait_tasks(tasks)
+                            store_wait_ms = (
+                                time.perf_counter() - store_wait_start
+                            ) * 1000
+                            layer_ms = (time.perf_counter() - layer_start) * 1000
+                            if layer_ms >= 1.0:
+                                logger.info(
+                                    "UCM linker load layer tp_rank=%d batch=%d layer=%d "
+                                    "requests=%d transfers=%d store_tasks=%d submit_ms=%.3f "
+                                    "store_wait_ms=%.3f layer_ms=%.3f",
+                                    self._tp_rank,
+                                    counter_index,
+                                    layer,
+                                    len(pending),
+                                    len(page_transfers),
+                                    len(tasks),
+                                    submit_ms,
+                                    store_wait_ms,
+                                    layer_ms,
+                                )
                         self.layer_done_counter.complete(counter_index, layer)
+                    batch_ms = (time.perf_counter() - batch_start) * 1000
+                    if batch_ms >= 1.0:
+                        logger.info(
+                            "UCM linker load batch end tp_rank=%d batch=%d requests=%d "
+                            "total_ms=%.3f",
+                            self._tp_rank,
+                            counter_index,
+                            len(pending),
+                            batch_ms,
+                        )
                 except BaseException as error:
                     self.layer_done_counter.fail(counter_index, error)
                     logger.exception("UCM layer-wise load batch failed")
