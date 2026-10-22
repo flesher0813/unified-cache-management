@@ -132,6 +132,16 @@ class _PoolBundle:
     entries: tuple[DevicePoolEntry, ...]
 
 
+@dataclass
+class _TransferBuildTimings:
+    schema_ms: float = 0.0
+    locations_ms: float = 0.0
+    layer_meta_ms: float = 0.0
+    row_convert_ms: float = 0.0
+    address_assemble_ms: float = 0.0
+    layer_meta_calls: int = 0
+
+
 class UcmDirectLinker(UnifiedCacheLinker):
     """Link SGLang's L1 cache pools to a UCM Store adapter.
 
@@ -352,10 +362,16 @@ class UcmDirectLinker(UnifiedCacheLinker):
         transfer: PoolTransfer,
         layer: int,
         locations: list[int],
+        timings: _TransferBuildTimings | None = None,
     ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, int], ...]]:
+        meta_start = time.perf_counter() if timings is not None else 0.0
         meta = entry.get_prepared_layer_range_meta(locations, layer)
+        if timings is not None:
+            timings.layer_meta_ms += (time.perf_counter() - meta_start) * 1000
+            timings.layer_meta_calls += 1
         if meta is None:
             return (), ()
+        row_start = time.perf_counter() if timings is not None else 0.0
         pointers, sizes, offsets = meta
         page_count = len(transfer.keys or ())
         if len(pointers) != page_count:
@@ -370,10 +386,16 @@ class UcmDirectLinker(UnifiedCacheLinker):
             for row_sizes, row_offsets in zip(sizes, offsets)
         ):
             raise ValueError(f"UCM {entry.name} layer={layer} has a variable schema.")
+        if timings is not None:
+            timings.row_convert_ms += (time.perf_counter() - row_start) * 1000
         return rows, schema
 
     def _page_transfers(
-        self, transfers: list[PoolTransfer], *, for_io: bool
+        self,
+        transfers: list[PoolTransfer],
+        *,
+        for_io: bool,
+        timings: _TransferBuildTimings | None = None,
     ) -> list[UcmLayerTransfer]:
         by_name = {transfer.name: transfer for transfer in transfers}
         result: list[UcmLayerTransfer] = []
@@ -394,6 +416,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     f"UCM store bundle {bundle.name} has inconsistent source transfer metadata."
                 )
 
+            schema_start = time.perf_counter() if timings is not None else 0.0
             fragments = tuple(
                 fragment
                 for layer in bundle.layers
@@ -420,7 +443,10 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 for entry, _ in members
                 for size, _ in self._entry_layer_schema(entry, bundle.layers[0])
             )
+            if timings is not None:
+                timings.schema_ms += (time.perf_counter() - schema_start) * 1000
             if for_io:
+                locations_start = time.perf_counter() if timings is not None else 0.0
                 prepared_locations = []
                 for entry, transfer in members:
                     if transfer.host_indices is None:
@@ -430,26 +456,42 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     prepared_locations.append(
                         entry.prepare_locations(transfer.host_indices)
                     )
+                if timings is not None:
+                    timings.locations_ms += (
+                        time.perf_counter() - locations_start
+                    ) * 1000
                 rows = [list() for _ in page_keys]
                 for layer in bundle.layers:
                     for (entry, transfer), locations in zip(
                         members, prepared_locations
                     ):
                         entry_rows, schema = self._entry_layer_rows(
-                            entry, transfer, layer, locations
+                            entry, transfer, layer, locations, timings
                         )
                         if not entry_rows or not schema:
                             raise ValueError(
                                 f"UCM bundle {bundle.name} is missing "
                                 f"{entry.name} layer={layer}."
                             )
+                        assemble_start = (
+                            time.perf_counter() if timings is not None else 0.0
+                        )
                         for row, entry_row in zip(rows, entry_rows):
                             row.extend(entry_row)
+                        if timings is not None:
+                            timings.address_assemble_ms += (
+                                time.perf_counter() - assemble_start
+                            ) * 1000
+                assemble_start = time.perf_counter() if timings is not None else 0.0
                 addresses = tuple(tuple(row) for row in rows)
                 if any(len(row) != len(fragments) for row in addresses):
                     raise ValueError(
                         f"UCM bundle {bundle.name} page address/schema mismatch."
                     )
+                if timings is not None:
+                    timings.address_assemble_ms += (
+                        time.perf_counter() - assemble_start
+                    ) * 1000
             else:
                 addresses = tuple(() for _ in page_keys)
             result.append(
@@ -554,14 +596,26 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     ready_event.synchronize()
                     ready_wait_ms = (time.perf_counter() - ready_start) * 1000
                     transfer_build_start = time.perf_counter()
+                    build_timings = _TransferBuildTimings()
                     page_transfers = [
                         transfer
                         for request in pending.values()
-                        for transfer in self._page_transfers(request, for_io=True)
+                        for transfer in self._page_transfers(
+                            request, for_io=True, timings=build_timings
+                        )
                     ]
                     transfer_build_ms = (
                         time.perf_counter() - transfer_build_start
                     ) * 1000
+                    transfer_build_other_ms = transfer_build_ms - sum(
+                        (
+                            build_timings.schema_ms,
+                            build_timings.locations_ms,
+                            build_timings.layer_meta_ms,
+                            build_timings.row_convert_ms,
+                            build_timings.address_assemble_ms,
+                        )
+                    )
                     transfer_prepare_start = time.perf_counter()
                     prepared_transfers = self.adapter.prepare_load(page_transfers)
                     transfer_prepare_ms = (
@@ -583,7 +637,10 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             "UCM linker load batch begin tp_rank=%d batch=%d requests=%d "
                             "transfers=%d transfer_pages=%d queue_wait_ms=%.3f "
                             "ready_event_ms=%.3f transfer_build_ms=%.3f "
-                            "transfer_prepare_ms=%.3f",
+                            "transfer_prepare_ms=%.3f build_schema_ms=%.3f "
+                            "build_locations_ms=%.3f build_layer_meta_ms=%.3f "
+                            "build_row_convert_ms=%.3f build_address_assemble_ms=%.3f "
+                            "build_other_ms=%.3f build_layer_meta_calls=%d",
                             self._tp_rank,
                             counter_index,
                             len(pending),
@@ -593,6 +650,13 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             ready_wait_ms,
                             transfer_build_ms,
                             transfer_prepare_ms,
+                            build_timings.schema_ms,
+                            build_timings.locations_ms,
+                            build_timings.layer_meta_ms,
+                            build_timings.row_convert_ms,
+                            build_timings.address_assemble_ms,
+                            transfer_build_other_ms,
+                            build_timings.layer_meta_calls,
                         )
                     for layer in range(self.num_layers):
                         if page_transfers:
