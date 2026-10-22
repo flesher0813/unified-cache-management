@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass
 from queue import Empty, Queue
@@ -346,11 +347,12 @@ class UcmDirectLinker(UnifiedCacheLinker):
         )
 
     def _entry_layer_rows(
-        self, entry: DevicePoolEntry, transfer: PoolTransfer, layer: int
+        self,
+        entry: DevicePoolEntry,
+        transfer: PoolTransfer,
+        layer: int,
+        locations: list[int],
     ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, int], ...]]:
-        if transfer.host_indices is None:
-            raise ValueError(f"UCM {entry.name} transfer has no device indices.")
-        locations = entry.prepare_locations(transfer.host_indices)
         meta = entry.get_prepared_layer_range_meta(locations, layer)
         if meta is None:
             return (), ()
@@ -419,11 +421,22 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 for size, _ in self._entry_layer_schema(entry, bundle.layers[0])
             )
             if for_io:
+                prepared_locations = []
+                for entry, transfer in members:
+                    if transfer.host_indices is None:
+                        raise ValueError(
+                            f"UCM {entry.name} transfer has no device indices."
+                        )
+                    prepared_locations.append(
+                        entry.prepare_locations(transfer.host_indices)
+                    )
                 rows = [list() for _ in page_keys]
                 for layer in bundle.layers:
-                    for entry, transfer in members:
+                    for (entry, transfer), locations in zip(
+                        members, prepared_locations
+                    ):
                         entry_rows, schema = self._entry_layer_rows(
-                            entry, transfer, layer
+                            entry, transfer, layer, locations
                         )
                         if not entry_rows or not schema:
                             raise ValueError(
@@ -549,14 +562,28 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     transfer_build_ms = (
                         time.perf_counter() - transfer_build_start
                     ) * 1000
+                    transfer_prepare_start = time.perf_counter()
+                    prepared_transfers = self.adapter.prepare_load(page_transfers)
+                    transfer_prepare_ms = (
+                        time.perf_counter() - transfer_prepare_start
+                    ) * 1000
                     page_count = sum(
                         len(transfer.page_keys) for transfer in page_transfers
                     )
-                    if max(queue_wait_ms, ready_wait_ms, transfer_build_ms) >= 1.0:
+                    if (
+                        max(
+                            queue_wait_ms,
+                            ready_wait_ms,
+                            transfer_build_ms,
+                            transfer_prepare_ms,
+                        )
+                        >= 1.0
+                    ):
                         logger.info(
                             "UCM linker load batch begin tp_rank=%d batch=%d requests=%d "
                             "transfers=%d transfer_pages=%d queue_wait_ms=%.3f "
-                            "ready_event_ms=%.3f transfer_build_ms=%.3f",
+                            "ready_event_ms=%.3f transfer_build_ms=%.3f "
+                            "transfer_prepare_ms=%.3f",
                             self._tp_rank,
                             counter_index,
                             len(pending),
@@ -565,6 +592,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             queue_wait_ms,
                             ready_wait_ms,
                             transfer_build_ms,
+                            transfer_prepare_ms,
                         )
                     for layer in range(self.num_layers):
                         if page_transfers:
@@ -572,8 +600,8 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             # requests; release it only after every shard finishes.
                             layer_start = time.perf_counter()
                             submit_start = layer_start
-                            tasks = self.adapter.submit_load_layer(
-                                page_transfers, layer
+                            tasks = self.adapter.submit_prepared_load_layer(
+                                prepared_transfers, layer
                             )
                             submit_ms = (time.perf_counter() - submit_start) * 1000
                             store_wait_start = time.perf_counter()

@@ -51,6 +51,15 @@ class _StoreTask:
     task: Task
 
 
+@dataclass(frozen=True)
+class _PreparedStoreTransfer:
+    transfer: UcmLayerTransfer
+    store: UcmKVStoreBaseV1
+    block_ids: tuple[bytes, ...]
+    tensor_count: int
+    shards_by_layer: dict[int, tuple[int, ...]]
+
+
 def _safe_name(value: object) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]", "_", str(value))
 
@@ -506,17 +515,11 @@ class UcmDirectStoreAdapter:
                 raise
         return candidates
 
-    def _submit(
-        self,
-        transfers: list[UcmLayerTransfer],
-        *,
-        is_offload: bool,
-        logical_layer: int | None = None,
-    ) -> list[_StoreTask]:
-        tasks: list[_StoreTask] = []
+    def _prepare_transfers(
+        self, transfers: list[UcmLayerTransfer], *, is_offload: bool
+    ) -> list[_PreparedStoreTransfer]:
+        prepared: list[_PreparedStoreTransfer] = []
         for transfer in transfers:
-            if logical_layer is not None and logical_layer not in transfer.layers:
-                continue
             try:
                 if len(transfer.page_keys) != len(transfer.addresses):
                     raise ValueError("mismatched page keys and addresses")
@@ -531,7 +534,7 @@ class UcmDirectStoreAdapter:
                     raise ValueError("layer count/address schema mismatch")
                 if transfer.shard_size != sum(transfer.tensor_size_list):
                     raise ValueError("tensor sizes do not match shard size")
-                layer_rows = []
+                shard_indices: dict[int, list[int]] = {}
                 for shard_index, layer in enumerate(transfer.layers):
                     start = shard_index * tensor_count
                     stop = start + tensor_count
@@ -541,29 +544,71 @@ class UcmDirectStoreAdapter:
                             f"UCM group {transfer.store_group} layer={layer} "
                             "does not match the Store shard schema."
                         )
-                    layer_rows.append(
-                        (
-                            shard_index,
-                            tuple(tuple(row[start:stop]) for row in transfer.addresses),
-                        )
+                    shard_indices.setdefault(layer, []).append(shard_index)
+                prepared.append(
+                    _PreparedStoreTransfer(
+                        transfer=transfer,
+                        store=self._ensure_store_schema(
+                            transfer.store_group,
+                            schema,
+                            shard_size=transfer.shard_size,
+                            tensor_size_list=transfer.tensor_size_list,
+                        ),
+                        block_ids=tuple(self._block_ids(transfer)),
+                        tensor_count=tensor_count,
+                        shards_by_layer={
+                            layer: tuple(indices)
+                            for layer, indices in shard_indices.items()
+                        },
                     )
-                store = self._ensure_store(transfer)
-                operation = store.dump_data if is_offload else store.load_data
-                block_ids = tuple(self._block_ids(transfer))
-                for shard_index, rows in layer_rows:
+                )
+            except Exception:
+                logger.exception(
+                    "UCM %s prepare failed: group=%s source=%s layers=%s pools=%s "
+                    "pages=%d.",
+                    "offload" if is_offload else "load",
+                    transfer.store_group,
+                    transfer.source_pool,
+                    transfer.layers,
+                    transfer.pools,
+                    len(transfer.page_keys),
+                )
+                raise
+        return prepared
+
+    def prepare_load(
+        self, transfers: list[UcmLayerTransfer]
+    ) -> list[_PreparedStoreTransfer]:
+        return self._prepare_transfers(transfers, is_offload=False)
+
+    def _submit_prepared(
+        self,
+        prepared: list[_PreparedStoreTransfer],
+        *,
+        is_offload: bool,
+        logical_layer: int | None = None,
+    ) -> list[_StoreTask]:
+        tasks: list[_StoreTask] = []
+        for item in prepared:
+            transfer = item.transfer
+            try:
+                operation = item.store.dump_data if is_offload else item.store.load_data
+                shard_indices = (
+                    range(len(transfer.layers))
+                    if logical_layer is None
+                    else item.shards_by_layer.get(logical_layer, ())
+                )
+                for shard_index in shard_indices:
                     # The Store index is local to this bundle; transfer.layers
                     # contains the corresponding SGLang logical layer.
-                    if (
-                        logical_layer is not None
-                        and transfer.layers[shard_index] != logical_layer
-                    ):
-                        continue
+                    start = shard_index * item.tensor_count
+                    stop = start + item.tensor_count
                     task = operation(
-                        list(block_ids),
-                        [shard_index] * len(block_ids),
-                        [list(row) for row in rows],
+                        list(item.block_ids),
+                        [shard_index] * len(item.block_ids),
+                        [list(row[start:stop]) for row in transfer.addresses],
                     )
-                    tasks.append(_StoreTask(store, task))
+                    tasks.append(_StoreTask(item.store, task))
             except Exception:
                 logger.exception(
                     "UCM %s submit failed: group=%s source=%s layers=%s pools=%s "
@@ -579,15 +624,29 @@ class UcmDirectStoreAdapter:
         return tasks
 
     def submit_load(self, transfers: list[UcmLayerTransfer]) -> list[_StoreTask]:
-        return self._submit(transfers, is_offload=False)
+        return self._submit_prepared(self.prepare_load(transfers), is_offload=False)
 
     def submit_load_layer(
         self, transfers: list[UcmLayerTransfer], logical_layer: int
     ) -> list[_StoreTask]:
-        return self._submit(transfers, is_offload=False, logical_layer=logical_layer)
+        selected = [
+            transfer for transfer in transfers if logical_layer in transfer.layers
+        ]
+        return self.submit_prepared_load_layer(
+            self.prepare_load(selected), logical_layer
+        )
+
+    def submit_prepared_load_layer(
+        self, prepared: list[_PreparedStoreTransfer], logical_layer: int
+    ) -> list[_StoreTask]:
+        return self._submit_prepared(
+            prepared, is_offload=False, logical_layer=logical_layer
+        )
 
     def submit_offload(self, transfers: list[UcmLayerTransfer]) -> list[_StoreTask]:
-        return self._submit(transfers, is_offload=True)
+        return self._submit_prepared(
+            self._prepare_transfers(transfers, is_offload=True), is_offload=True
+        )
 
     def wait(self, tasks: _StoreTask | Iterable[_StoreTask] | None) -> None:
         if tasks is None:
