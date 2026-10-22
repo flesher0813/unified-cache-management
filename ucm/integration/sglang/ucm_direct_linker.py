@@ -363,32 +363,32 @@ class UcmDirectLinker(UnifiedCacheLinker):
         layer: int,
         locations: list[int],
         timings: _TransferBuildTimings | None = None,
-    ) -> tuple[tuple[tuple[int, ...], ...], tuple[tuple[int, int], ...]]:
+    ) -> tuple[list[list[int]], tuple[tuple[int, int], ...]]:
         meta_start = time.perf_counter() if timings is not None else 0.0
         meta = entry.get_prepared_layer_range_meta(locations, layer)
         if timings is not None:
             timings.layer_meta_ms += (time.perf_counter() - meta_start) * 1000
             timings.layer_meta_calls += 1
         if meta is None:
-            return (), ()
+            return [], ()
         row_start = time.perf_counter() if timings is not None else 0.0
         pointers, sizes, offsets = meta
         page_count = len(transfer.keys or ())
-        if len(pointers) != page_count:
+        if not (len(pointers) == len(sizes) == len(offsets) == page_count):
             raise ValueError(
                 f"UCM bundle requires one address row per page for {entry.name}: "
-                f"rows={len(pointers)} pages={page_count}."
+                f"pointers={len(pointers)} sizes={len(sizes)} "
+                f"offsets={len(offsets)} pages={page_count}."
             )
         schema = self._entry_layer_schema(entry, layer)
-        rows = tuple(tuple(map(int, row)) for row in pointers)
-        if any(
-            tuple(zip(map(int, row_sizes), map(int, row_offsets))) != schema
-            for row_sizes, row_offsets in zip(sizes, offsets)
-        ):
+        # DevicePoolEntry builds every size/offset row from the same fixed
+        # buffer metadata. Validate the layer schema once; the final address
+        # row-width check still covers every page after bundle assembly.
+        if page_count and tuple(zip(sizes[0], offsets[0])) != schema:
             raise ValueError(f"UCM {entry.name} layer={layer} has a variable schema.")
         if timings is not None:
             timings.row_convert_ms += (time.perf_counter() - row_start) * 1000
-        return rows, schema
+        return pointers, schema
 
     def _page_transfers(
         self,
