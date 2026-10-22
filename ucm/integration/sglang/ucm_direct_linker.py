@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from queue import Empty, Queue
 from typing import Any
 
+import numpy as np
 import torch
 from sglang.srt.mem_cache.cache_init_params import CacheInitParams
 from sglang.srt.mem_cache.hicache_storage import PoolName, PoolTransfer
@@ -35,6 +36,7 @@ from ucm.integration.sglang.ucm_direct_store_adapter import (
 
 logger = logging.getLogger(__name__)
 device_module = get_device_module()
+_MIN_TIMING_LOG_MS = 10.0
 
 
 class LayerWiseLoadCounter:
@@ -96,7 +98,7 @@ class LayerWiseLoadCounter:
             raise RuntimeError("UCM layer-wise KV load failed.") from error
         finally:
             wait_ms = (time.perf_counter() - wait_start) * 1000
-            if wait_ms >= 1.0:
+            if wait_ms >= _MIN_TIMING_LOG_MS:
                 logger.info(
                     "UCM linker wait_until tp_rank=%d batch=%d layer=%d "
                     "pending_before_wait=%s wait_ms=%.3f",
@@ -130,6 +132,15 @@ class _PoolBundle:
     source_pool: PoolName
     layers: tuple[int, ...]
     entries: tuple[DevicePoolEntry, ...]
+
+
+@dataclass(frozen=True)
+class _LayerPointerLayout:
+    """Fixed buffer addresses, strides and fragment schema for one pool layer."""
+
+    bases: np.ndarray
+    strides: np.ndarray
+    schema: tuple[tuple[int, int], ...]
 
 
 @dataclass
@@ -169,6 +180,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
         self.pools = self.pool_group.entry_map
         self.num_layers = self.pool_group.num_layers
         self._bundles = self._build_pool_bundles()
+        self._layer_pointer_layouts = self._build_layer_pointer_layouts()
         self._closed = False
         self._gc_frozen = False
         self._pending_loads: dict[str, list[PoolTransfer]] = {}
@@ -356,39 +368,77 @@ class UcmDirectLinker(UnifiedCacheLinker):
             for index in buffer_indices
         )
 
+    def _build_layer_pointer_layouts(
+        self,
+    ) -> dict[tuple[PoolName, int], _LayerPointerLayout]:
+        layouts: dict[tuple[PoolName, int], _LayerPointerLayout] = {}
+        for bundle in self._bundles:
+            for entry in bundle.entries:
+                for layer in bundle.layers:
+                    key = (entry.name, layer)
+                    if key in layouts:
+                        continue
+                    mapped = entry.layer_mapping[layer]
+                    buffer_indices = (
+                        (mapped,) if isinstance(mapped, int) else tuple(mapped)
+                    )
+                    # Match DevicePoolEntry.get_prepared_layer_range_meta's
+                    # component-then-buffer order exactly.
+                    items = [
+                        (*component[index], offsets[index])
+                        for component, offsets in zip(
+                            entry.buffer_meta, entry._component_offsets
+                        )
+                        for index in buffer_indices
+                    ]
+                    bases = np.asarray([item[0] for item in items], dtype=np.uint64)
+                    strides = np.asarray([item[1] for item in items], dtype=np.uint64)
+                    bases.setflags(write=False)
+                    strides.setflags(write=False)
+                    layouts[key] = _LayerPointerLayout(
+                        bases=bases,
+                        strides=strides,
+                        schema=tuple((int(item[2]), int(item[3])) for item in items),
+                    )
+        return layouts
+
     def _entry_layer_rows(
         self,
         entry: DevicePoolEntry,
         transfer: PoolTransfer,
         layer: int,
-        locations: list[int],
+        locations: np.ndarray,
         timings: _TransferBuildTimings | None = None,
     ) -> tuple[list[list[int]], tuple[tuple[int, int], ...]]:
+        layout = self._layer_pointer_layouts.get((entry.name, layer))
+        if layout is None:
+            return [], ()
+        page_count = len(transfer.keys or ())
+        if not entry.packed and len(layout.schema) != 1:
+            raise ValueError(
+                f"UCM bundle requires one address row per page for {entry.name}: "
+                f"fragments={len(layout.schema)} pages={page_count}."
+            )
         meta_start = time.perf_counter() if timings is not None else 0.0
-        meta = entry.get_prepared_layer_range_meta(locations, layer)
+        # Only the page rows change per transfer. Compute the address matrix
+        # without rebuilding a Python size/offset list for every page.
+        pointer_matrix = (
+            locations[:, None] * layout.strides[None, :]
+            + layout.bases[None, :]
+        )
         if timings is not None:
             timings.layer_meta_ms += (time.perf_counter() - meta_start) * 1000
             timings.layer_meta_calls += 1
-        if meta is None:
-            return [], ()
         row_start = time.perf_counter() if timings is not None else 0.0
-        pointers, sizes, offsets = meta
-        page_count = len(transfer.keys or ())
-        if not (len(pointers) == len(sizes) == len(offsets) == page_count):
+        pointers = pointer_matrix.tolist()
+        if len(pointers) != page_count:
             raise ValueError(
                 f"UCM bundle requires one address row per page for {entry.name}: "
-                f"pointers={len(pointers)} sizes={len(sizes)} "
-                f"offsets={len(offsets)} pages={page_count}."
+                f"pointers={len(pointers)} pages={page_count}."
             )
-        schema = self._entry_layer_schema(entry, layer)
-        # DevicePoolEntry builds every size/offset row from the same fixed
-        # buffer metadata. Validate the layer schema once; the final address
-        # row-width check still covers every page after bundle assembly.
-        if page_count and tuple(zip(sizes[0], offsets[0])) != schema:
-            raise ValueError(f"UCM {entry.name} layer={layer} has a variable schema.")
         if timings is not None:
             timings.row_convert_ms += (time.perf_counter() - row_start) * 1000
-        return pointers, schema
+        return pointers, layout.schema
 
     def _page_transfers(
         self,
@@ -454,7 +504,10 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             f"UCM {entry.name} transfer has no device indices."
                         )
                     prepared_locations.append(
-                        entry.prepare_locations(transfer.host_indices)
+                        np.asarray(
+                            entry.prepare_locations(transfer.host_indices),
+                            dtype=np.uint64,
+                        )
                     )
                 if timings is not None:
                     timings.locations_ms += (
@@ -631,7 +684,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                             transfer_build_ms,
                             transfer_prepare_ms,
                         )
-                        >= 1.0
+                        >= _MIN_TIMING_LOG_MS
                     ):
                         logger.info(
                             "UCM linker load batch begin tp_rank=%d batch=%d requests=%d "
@@ -674,7 +727,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                                 time.perf_counter() - store_wait_start
                             ) * 1000
                             layer_ms = (time.perf_counter() - layer_start) * 1000
-                            if layer_ms >= 1.0:
+                            if layer_ms >= _MIN_TIMING_LOG_MS:
                                 logger.info(
                                     "UCM linker load layer tp_rank=%d batch=%d layer=%d "
                                     "requests=%d transfers=%d store_tasks=%d submit_ms=%.3f "
@@ -691,7 +744,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                                 )
                         self.layer_done_counter.complete(counter_index, layer)
                     batch_ms = (time.perf_counter() - batch_start) * 1000
-                    if batch_ms >= 1.0:
+                    if batch_ms >= _MIN_TIMING_LOG_MS:
                         logger.info(
                             "UCM linker load batch end tp_rank=%d batch=%d requests=%d "
                             "total_ms=%.3f",
