@@ -1,0 +1,35 @@
+name: Posix reproduction
+on:
+  push:
+    branches: [codex/posix-repro]
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record runner and filesystem
+        run: |
+          echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+          git rev-parse HEAD
+          uname -r
+          findmnt -T "$GITHUB_WORKSPACE"
+      - name: Configure and build
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_UCM_SPARSE=OFF -DBUILD_UNIT_TESTS=ON \
+            -DRUNTIME_ENVIRONMENT=simu -DBUILD_UCM_ASU=ON
+          cmake --build build --config Debug -j
+      - name: Run Posix cases five times
+        run: |
+          pattern='^(UCPosixStoreTest\.(DumpThenLoad|DumpThenLoadWithIoDirect)|UCPosixTransManagerTest\.(TransBlock|TransBlockLayerWise|PsyncLoadSubmitAfterCloseFailsCleanly))$'
+          failures=0
+          for round in 1 2 3 4 5; do
+            echo "=== Round $round ==="
+            ctest --test-dir build --output-on-failure \
+              --no-tests=error -R "$pattern" || failures=$((failures + 1))
+          done
+          echo "$failures of 5 rounds failed."
+          test "$failures" -eq 0
