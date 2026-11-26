@@ -21,7 +21,6 @@ class LoadWorkerTest(unittest.TestCase):
         handle=42,
         prefetch=False,
         cancelled=False,
-
         metrics=False,
     ):
         events = []
@@ -103,7 +102,10 @@ class LoadWorkerTest(unittest.TestCase):
             if cancelled:
                 future.cancel()
             obj._load_queue.put(
-                linker_module._PrefetchLoad([object()], ready_events, future)
+                linker_module._PrefetchLoad(
+                    [object()], ready_events, future,
+                    metrics_module.LinkerOperation.begin(metrics, "prefetch"),
+                )
             )
         else:
             obj._load_queue.put((0, {"req": [object()]}, ready_events, None))
@@ -112,6 +114,15 @@ class LoadWorkerTest(unittest.TestCase):
         self.assertEqual(obj._load_queue.unfinished_tasks, 0)
         self.assertEqual(reaped, set(submitted))
         return events
+
+    def test_prefetch_records_its_queue_and_prepare_times(self):
+        with patch.object(metrics_module, "record_metrics") as record:
+            self.run_worker(prefetch=True, metrics=True)
+        keys = {key for call in record.call_args_list for key in call.args[0]}
+        self.assertIn("linker_prefetch_queue_duration_ms", keys)
+        self.assertIn("linker_prefetch_prepare_duration_ms", keys)
+        self.assertIn("linker_load_indices_sync_duration_ms", keys)
+        self.assertNotIn("linker_load_prepare_duration_ms", keys)
 
     def test_prefetch_completes_after_all_layers_without_layer_notifications(self):
         with patch.object(linker_module, "Future", Future, create=True):
@@ -135,6 +146,7 @@ class LoadWorkerTest(unittest.TestCase):
         obj = object.__new__(linker_module.UcmDirectLinker)
         obj.num_layers = 4
         obj._closed = False
+        obj._metrics_enabled = False
         obj._load_thread = types.SimpleNamespace(is_alive=lambda: True)
         obj._load_queue = queue.Queue()
         obj._expand = lambda transfers, **kwargs: transfers
@@ -167,7 +179,7 @@ class LoadWorkerTest(unittest.TestCase):
                     name
                     for sample in samples
                     for name in sample
-                    if name.startswith("sglang_linker_load_layer_duration_ms_")
+                    if name.startswith("linker_load_layer_duration_ms_")
                 ]
                 self.assertEqual(len(names), len(set(names)))
                 expected = (

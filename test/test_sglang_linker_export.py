@@ -1,6 +1,6 @@
 """Test real multiprocess Prometheus export without native UCM, SGLang or GPUs.
 
-Run with pytest --noconftest test/test_sglang_linker_export.py. Each case uses a fresh
+Run with pytest --noconftest test/test_linker_export.py. Each case uses a fresh
 interpreter because Prometheus selects its storage mode at import time.
 """
 
@@ -170,17 +170,17 @@ operation.start()
 tasks = adapter.submit_offload([transfer])
 adapter.wait(tasks)
 operation.finish(True)
-io_metrics.record_metrics({"sglang_linker_load_layer_duration_ms_3": 12.5})
+io_metrics.record_metrics({"linker_load_layer_duration_ms_3": 12.5})
 io_metrics.shutdown_metrics_logger(metrics_logger)
 assert not metrics_logger.thread.is_alive()
 labels = {"model_name": "linker-model", "worker_id": "dp1_tp2_pp3_attn_cp0"}
-assert value("ucm:sglang_connector_dump_requests_total", **labels) == 1
-assert value("ucm:sglang_connector_dump_bytes_total", **labels) == 32
-assert value("ucm:sglang_linker_offload_completed_total", **labels) == 1
-assert value("ucm:sglang_linker_offload_duration_ms_count", **labels) == 1
-assert value("ucm:sglang_adapter_interface_submit_offload_duration_ms_count", **labels) == 1
-assert "ucm:sglang_adapter_interface_wait_duration_ms_count" not in scrape()
-assert value("ucm:sglang_linker_load_layer_duration_ms_sum", layer="3", **labels) == 12.5
+assert value("ucm:linker_adapter_dump_requests_total", **labels) == 1
+assert value("ucm:linker_adapter_dump_bytes_total", **labels) == 32
+assert value("ucm:linker_offload_completed_total", **labels) == 1
+assert value("ucm:linker_offload_duration_ms_count", **labels) == 1
+assert value("ucm:linker_adapter_interface_submit_offload_duration_ms_count", **labels) == 1
+assert "ucm:linker_adapter_interface_wait_duration_ms_count" not in scrape()
+assert value("ucm:linker_load_layer_duration_ms_sum", layer="3", **labels) == 12.5
 assert "sglang:prefetch_pgs" not in scrape()
 """,
     )

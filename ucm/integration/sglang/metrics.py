@@ -121,14 +121,14 @@ class LinkerOperation:
         if not enabled:
             return None
         observation = cls(kind, time.perf_counter())
-        record_metrics({f"sglang_linker_{kind}_operations_total": 1})
+        record_metrics({f"linker_{kind}_operations_total": 1})
         return observation
 
     def start(self):
         record_metrics(
             {
-                f"sglang_linker_{self.kind}_started_total": 1,
-                f"sglang_linker_{self.kind}_queue_duration_ms": max(
+                f"linker_{self.kind}_started_total": 1,
+                f"linker_{self.kind}_queue_duration_ms": max(
                     time.perf_counter() - self.queued_at, 0.0
                 )
                 * 1000,
@@ -140,14 +140,14 @@ class LinkerOperation:
             return
         self.finished = True
         values = {
-            f"sglang_linker_{self.kind}_completed_total": 1,
-            f"sglang_linker_{self.kind}_duration_ms": max(
+            f"linker_{self.kind}_completed_total": 1,
+            f"linker_{self.kind}_duration_ms": max(
                 time.perf_counter() - self.queued_at, 0.0
             )
             * 1000,
         }
         if not success:
-            values[f"sglang_linker_{self.kind}_errors_total"] = 1
+            values[f"linker_{self.kind}_errors_total"] = 1
         record_metrics(values)
 
 
@@ -210,8 +210,8 @@ def measure_io(enabled: bool, is_set: bool, pages: int, byte_count: Callable[[],
 def _record_interface_duration(func):
     """Measure synchronous call time only, including exceptional returns."""
     owner, method = func.__qualname__.split(".")[-2:]
-    scope = "adapter" if owner == "UcmDirectStoreAdapter" else "linker"
-    name = f"sglang_{scope}_interface_{method.lstrip('_')}_duration_ms"
+    scope = "linker_adapter" if owner == "UcmDirectStoreAdapter" else "linker"
+    name = f"{scope}_interface_{method.lstrip('_')}_duration_ms"
 
     @wraps(func)
     def wrapper(self, *args, **kwargs):
@@ -243,7 +243,7 @@ def measure_phase(enabled, name, timings=None):
         if timings is not None:
             timings[name] = {"started": started, "ended": ended}
         record_metrics(
-            {f"sglang_linker_{name}_duration_ms": max(0.0, ended - started) * 1000}
+            {f"linker_{name}_duration_ms": max(0.0, ended - started) * 1000}
         )
 
 
@@ -256,4 +256,4 @@ def finish_timing(timings, name):
     started = timings.pop(name, None)
     if started is not None:
         ended = time.perf_counter()
-        record_metrics({f"sglang_linker_{name}": max(0.0, ended - started) * 1000})
+        record_metrics({f"linker_{name}": max(0.0, ended - started) * 1000})

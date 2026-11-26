@@ -61,16 +61,16 @@ class LinkerMetricsTest(unittest.TestCase):
         tasks = self.adapter.submit_prepared_load_layer(prepared, 0)
         self.assertEqual(
             self.total(
-                "sglang_adapter_interface_submit_prepared_load_layer_duration_ms"
+                "linker_adapter_interface_submit_prepared_load_layer_duration_ms"
             ),
             250,
         )
         self.now += 10
         self.adapter.wait(tasks)
-        self.assertEqual(self.total("sglang_adapter_interface_wait_duration_ms"), 0)
+        self.assertEqual(self.total("linker_adapter_interface_wait_duration_ms"), 0)
         self.assertFalse(
             any(
-                key.startswith("sglang_linker_load_layer_duration_ms_")
+                key.startswith("linker_load_layer_duration_ms_")
                 for sample in self.samples
                 for key in sample
             )
@@ -86,7 +86,7 @@ class LinkerMetricsTest(unittest.TestCase):
         self.store.wait.side_effect = fail
         with self.assertRaisesRegex(RuntimeError, "check"):
             timed_wait(self.adapter, [task])
-        self.assertEqual(self.total("sglang_adapter_interface_wait_duration_ms"), 500)
+        self.assertEqual(self.total("linker_adapter_interface_wait_duration_ms"), 500)
         self.store.wait.side_effect = None
         self.adapter.metrics_enabled = False
         with patch.object(
@@ -105,7 +105,7 @@ class LinkerMetricsTest(unittest.TestCase):
                 self.now += 2
                 raise RuntimeError("prepare")
         self.assertEqual(timings["load_prepare"], {"started": 10, "ended": 12})
-        self.assertEqual(self.total("sglang_linker_load_prepare_duration_ms"), 2000)
+        self.assertEqual(self.total("linker_load_prepare_duration_ms"), 2000)
 
     def total(self, name):
         return sum(sample.get(name, 0) for sample in self.samples)
@@ -127,10 +127,10 @@ class LinkerMetricsTest(unittest.TestCase):
                     self.assertEqual(self.store.load_data.call_args.kwargs, expected)
                     self.adapter.wait(tasks)
                     self.assertEqual(
-                        self.total("sglang_connector_load_requests_total"), 1
+                        self.total("linker_adapter_load_requests_total"), 1
                     )
                     self.assertEqual(
-                        self.total("sglang_connector_load_bytes_total"), 16
+                        self.total("linker_adapter_load_bytes_total"), 16
                     )
 
     def test_distributed_load_submit_failure_drains_and_records_metrics(self):
@@ -151,9 +151,9 @@ class LinkerMetricsTest(unittest.TestCase):
                 {"prerequisite_handle": 43, "distribute_backend_load": True},
             )
         self.store.wait.assert_called_once_with(1)
-        self.assertEqual(self.total("sglang_connector_load_requests_total"), 2)
-        self.assertEqual(self.total("sglang_connector_load_submit_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_load_bytes_total"), 16)
+        self.assertEqual(self.total("linker_adapter_load_requests_total"), 2)
+        self.assertEqual(self.total("linker_adapter_load_submit_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_load_bytes_total"), 16)
 
     def test_partial_submit_failure_drains_success_and_records_failed_attempt(self):
         self.store.dump_data.side_effect = [1, RuntimeError("submit")]
@@ -163,9 +163,9 @@ class LinkerMetricsTest(unittest.TestCase):
                     [self.fixture.transfer(), self.fixture.transfer()]
                 )
         self.store.wait.assert_called_once_with(1)
-        self.assertEqual(self.total("sglang_connector_dump_requests_total"), 2)
-        self.assertEqual(self.total("sglang_connector_dump_submit_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_dump_bytes_total"), 32)
+        self.assertEqual(self.total("linker_adapter_dump_requests_total"), 2)
+        self.assertEqual(self.total("linker_adapter_dump_submit_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_dump_bytes_total"), 32)
 
     def test_wait_failure_does_not_skip_remaining_tasks(self):
         tasks = self.adapter.submit_offload(
@@ -175,8 +175,8 @@ class LinkerMetricsTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "wait"):
             self.adapter.wait(tasks)
         self.assertEqual(self.store.wait.call_count, 2)
-        self.assertEqual(self.total("sglang_connector_dump_wait_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_dump_bytes_total"), 32)
+        self.assertEqual(self.total("linker_adapter_dump_wait_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_dump_bytes_total"), 32)
 
     def test_check_failure_is_not_overwritten_by_successful_cleanup(self):
         tasks = self.adapter.submit_offload(
@@ -186,11 +186,11 @@ class LinkerMetricsTest(unittest.TestCase):
         for _ in range(2):
             with self.assertRaisesRegex(RuntimeError, "check"):
                 self.adapter.check(tasks[0])
-        self.assertEqual(self.total("sglang_linker_dump_check_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_dump_requests_total"), 0)
+        self.assertEqual(self.total("linker_dump_check_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_dump_requests_total"), 0)
         self.adapter.wait(tasks)
-        self.assertEqual(self.total("sglang_connector_dump_wait_errors_total"), 0)
-        self.assertEqual(self.total("sglang_connector_dump_bytes_total"), 32)
+        self.assertEqual(self.total("linker_adapter_dump_wait_errors_total"), 0)
+        self.assertEqual(self.total("linker_adapter_dump_bytes_total"), 32)
 
     def test_check_and_wait_failures_are_counted_separately(self):
         tasks = self.adapter.submit_offload([self.fixture.transfer()])
@@ -200,22 +200,22 @@ class LinkerMetricsTest(unittest.TestCase):
         self.store.wait.side_effect = RuntimeError("wait")
         with self.assertRaisesRegex(RuntimeError, "wait"):
             self.adapter.wait(tasks)
-        self.assertEqual(self.total("sglang_linker_dump_check_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_dump_wait_errors_total"), 1)
-        self.assertEqual(self.total("sglang_connector_dump_bytes_total"), 0)
+        self.assertEqual(self.total("linker_dump_check_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_dump_wait_errors_total"), 1)
+        self.assertEqual(self.total("linker_adapter_dump_bytes_total"), 0)
 
     def test_operation_queue_and_completion_have_separate_boundaries(self):
         obs = metrics_module.LinkerOperation.begin(True, "offload")
         self.now = 12
         obs.start()
-        self.assertEqual(self.total("sglang_linker_offload_completed_total"), 0)
+        self.assertEqual(self.total("linker_offload_completed_total"), 0)
         self.now = 17
         obs.finish(False)
         obs.finish(True)
-        self.assertEqual(self.total("sglang_linker_offload_queue_duration_ms"), 2000)
-        self.assertEqual(self.total("sglang_linker_offload_duration_ms"), 7000)
-        self.assertEqual(self.total("sglang_linker_offload_errors_total"), 1)
-        self.assertEqual(self.total("sglang_linker_offload_completed_total"), 1)
+        self.assertEqual(self.total("linker_offload_queue_duration_ms"), 2000)
+        self.assertEqual(self.total("linker_offload_duration_ms"), 7000)
+        self.assertEqual(self.total("linker_offload_errors_total"), 1)
+        self.assertEqual(self.total("linker_offload_completed_total"), 1)
 
     def lookup_linker(self):
         obj = object.__new__(linker_module.UcmDirectLinker)
@@ -240,23 +240,23 @@ class LinkerMetricsTest(unittest.TestCase):
         obj, transfers = self.lookup_linker()
         self.assertEqual(obj.lookup("r", transfers), [2, 4])
         obj.lookup("r", transfers)
-        self.assertEqual(self.total("sglang_linker_lookup_query_pages_total"), 8)
-        self.assertEqual(self.total("sglang_linker_lookup_hit_pages_total"), 8)
-        self.assertEqual(self.total("sglang_linker_lookup_resumed_total"), 1)
+        self.assertEqual(self.total("linker_lookup_query_pages_total"), 8)
+        self.assertEqual(self.total("linker_lookup_hit_pages_total"), 8)
+        self.assertEqual(self.total("linker_lookup_resumed_total"), 1)
         obj._lookup_owner = False
         self.assertEqual(obj.lookup("r", transfers), [1, 2, 3, 4])
-        self.assertEqual(self.total("sglang_linker_lookup_hit_pages_total"), 8)
+        self.assertEqual(self.total("linker_lookup_hit_pages_total"), 8)
         self.assertEqual(obj.adapter.lookup.call_count, 2)
-        self.assertEqual(self.total("sglang_linker_lookup_skipped_total"), 1)
+        self.assertEqual(self.total("linker_lookup_skipped_total"), 1)
 
     def test_lookup_error_records_no_successful_query_or_hit_pages(self):
         obj, transfers = self.lookup_linker()
         obj.adapter.lookup.side_effect = RuntimeError("lookup")
         with self.assertRaisesRegex(RuntimeError, "lookup"):
             obj.lookup("r", transfers)
-        self.assertEqual(self.total("sglang_linker_lookup_errors_total"), 1)
-        self.assertEqual(self.total("sglang_linker_lookup_requests_total"), 1)
-        self.assertEqual(self.total("sglang_linker_lookup_query_pages_total"), 0)
+        self.assertEqual(self.total("linker_lookup_errors_total"), 1)
+        self.assertEqual(self.total("linker_lookup_requests_total"), 1)
+        self.assertEqual(self.total("linker_lookup_query_pages_total"), 0)
         self.assertNotIn("r", obj._lookup_progress)
 
     def test_lookup_records_one_batch_without_including_export_time(self):
@@ -273,9 +273,9 @@ class LinkerMetricsTest(unittest.TestCase):
         obj.adapter.lookup.side_effect = lookup
         with patch.object(linker_module, "record_metrics", record):
             self.assertEqual(obj.lookup("r", transfers), [2, 4])
-        self.assertEqual(self.total("sglang_linker_lookup_duration_ms"), 250)
-        self.assertEqual(self.total("sglang_linker_lookup_query_pages_total"), 4)
-        self.assertEqual(self.total("sglang_linker_lookup_hit_pages_total"), 4)
+        self.assertEqual(self.total("linker_lookup_duration_ms"), 250)
+        self.assertEqual(self.total("linker_lookup_query_pages_total"), 4)
+        self.assertEqual(self.total("linker_lookup_hit_pages_total"), 4)
         self.assertEqual(obj._lookup_progress["r"].hit_pages, 4)
 
     def test_disabled_lookup_preserves_result_without_clock_or_samples(self):
@@ -298,7 +298,7 @@ class LinkerMetricsTest(unittest.TestCase):
             resume_from_pages=3,
         )
         self.assertEqual(result, [1, 2])
-        self.assertEqual(self.total("sglang_linker_lookup_fallback_total"), 1)
+        self.assertEqual(self.total("linker_lookup_fallback_total"), 1)
 
     def test_load_worker_counts_failure_and_drains_prefetched_tasks(self):
         obj = object.__new__(linker_module.UcmDirectLinker)
@@ -326,8 +326,8 @@ class LinkerMetricsTest(unittest.TestCase):
         with self.assertLogs(linker_module.logger, "ERROR"):
             obj._load_worker()
         self.assertEqual(self.store.wait.call_count, 2)
-        self.assertEqual(self.total("sglang_linker_load_errors_total"), 1)
-        self.assertEqual(self.total("sglang_linker_load_completed_total"), 1)
+        self.assertEqual(self.total("linker_load_errors_total"), 1)
+        self.assertEqual(self.total("linker_load_completed_total"), 1)
         self.assertEqual(obj._load_queue.unfinished_tasks, 0)
 
     def test_config_overrides_and_disabled_default_adapter(self):
@@ -494,11 +494,11 @@ class LinkerMetricsTest(unittest.TestCase):
         self.assertTrue(obj.load("request", [object()]))
         self.assertTrue(obj.cancel_queued_load("request"))
         self.assertFalse(obj.cancel_queued_load("request"))
-        self.assertEqual(self.total("sglang_linker_offload_skipped_total"), 1)
-        self.assertEqual(self.total("sglang_linker_load_cancelled_requests_total"), 1)
+        self.assertEqual(self.total("linker_offload_skipped_total"), 1)
+        self.assertEqual(self.total("linker_load_cancelled_requests_total"), 1)
         self.assertFalse(
             any(
-                key.startswith("sglang_connector_")
+                key.startswith("linker_adapter_")
                 for sample in self.samples
                 for key in sample
             )
@@ -530,17 +530,18 @@ class DashboardTest(unittest.TestCase):
             for target in panel.get("targets", []):
                 expr = target["expr"]
                 self.assertNotIn("or vector(0)", expr)
-                self.assertIn('worker_id=~"$worker_id"', expr)
-                for name in re.findall(r"ucm:(sglang_\w+)\{", expr):
+                if "ucm:" in expr:
+                    self.assertIn('worker_id=~"$worker_id"', expr)
+                for name in re.findall(r"ucm:(linker_\w+)\{", expr):
                     self.assertIn(name, names)
                     queried.add(name)
                 self.assertNotIn("${ucm_prefix}", expr)
         for item in config["counter"]:
-            if item["name"].startswith("sglang_linker_"):
+            if item["name"].startswith("linker_"):
                 self.assertIn(item["name"], queried)
         for name in (
-            "sglang_linker_load_layer_duration_ms",
-            "sglang_linker_load_layer_wait_duration_ms",
+            "linker_load_layer_duration_ms",
+            "linker_load_layer_wait_duration_ms",
         ):
             for suffix in ("_sum", "_count", "_bucket"):
                 self.assertIn(name + suffix, queried)

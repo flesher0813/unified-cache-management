@@ -51,7 +51,7 @@ def _supports_native_counter_metrics(sglang_version):
 def record_layer_wait(func):
     @wraps(func)
     def wait_until(self, threshold):
-        if not counter_metrics_enabled():
+        if not counter_metrics_enabled() or hasattr(self, "blocked_seconds"):
             return func(self, threshold)
         futures = self.futures.get(self.consumer_index)
         # Preserve inactive/invalid-call behavior without recording a load wait.

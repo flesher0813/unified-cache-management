@@ -638,7 +638,7 @@ class UcmDirectStoreAdapter:
                         )
                     if start and found == 0:
                         if self.metrics_enabled:
-                            record_metrics({"sglang_linker_lookup_fallback_total": 1})
+                            record_metrics({"linker_lookup_fallback_total": 1})
                         # The previous boundary vanished; rebuild from page 0.
                         found = (
                             store.lookup_on_prefix(self._block_ids(transfer, keys)) + 1
@@ -959,7 +959,7 @@ class UcmDirectStoreAdapter:
             if task.stats is not None and not task.stats.get("check_failed"):
                 task.stats["check_failed"] = True
                 record_metrics(
-                    {f"sglang_linker_{task.stats['operation']}_check_errors_total": 1}
+                    {f"linker_{task.stats['operation']}_check_errors_total": 1}
                 )
             raise
 
@@ -977,7 +977,7 @@ class UcmDirectStoreAdapter:
         if stats is None or stats.get("finished"):
             return
         stats["finished"] = True
-        prefix = f"sglang_connector_{stats['operation']}"
+        prefix = f"linker_adapter_{stats['operation']}"
         values = {f"{prefix}_requests_total": 1}
         if error:
             values[f"{prefix}_{error}_errors_total"] = 1

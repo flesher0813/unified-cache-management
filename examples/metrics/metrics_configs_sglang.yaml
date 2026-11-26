@@ -19,24 +19,44 @@ consumers:
 
 # Counter metrics configuration
 counter:
-  - name: "sglang_connector_load_requests_total"
+  - name: "linker_adapter_load_requests_total"
     documentation: "SGLang connector load: Physical storage transfer calls attempted, per worker and pool or layer"
-  - name: "sglang_connector_load_bytes_total"
+  - name: sglang_connector_load_requests_total
+    documentation: 'SGLang connector load: Physical storage transfer calls attempted,
+      per worker and pool or layer'
+  - name: "linker_adapter_load_bytes_total"
     documentation: "SGLang connector load: Bytes transferred by successful storage calls, local to this worker"
-  - name: "sglang_connector_load_submit_errors_total"
+  - name: sglang_connector_load_bytes_total
+    documentation: 'SGLang connector load: Bytes transferred by successful storage calls,
+      local to this worker'
+  - name: "linker_adapter_load_submit_errors_total"
     documentation: "SGLang connector load: Storage submission failures"
-  - name: "sglang_connector_load_wait_errors_total"
+  - name: sglang_connector_load_submit_errors_total
+    documentation: 'SGLang connector load: Storage submission failures'
+  - name: "linker_adapter_load_wait_errors_total"
     documentation: "SGLang connector load: Storage completion wait failures"
-  - name: "sglang_connector_dump_requests_total"
+  - name: sglang_connector_load_wait_errors_total
+    documentation: 'SGLang connector load: Storage completion wait failures'
+  - name: "linker_adapter_dump_requests_total"
     documentation: "SGLang connector dump: Physical storage transfer calls attempted, per worker and pool or layer"
-  - name: "sglang_connector_dump_bytes_total"
+  - name: sglang_connector_dump_requests_total
+    documentation: 'SGLang connector dump: Physical storage transfer calls attempted,
+      per worker and pool or layer'
+  - name: "linker_adapter_dump_bytes_total"
     documentation: "SGLang connector dump: Bytes transferred by successful storage calls, local to this worker"
-  - name: "sglang_connector_dump_submit_errors_total"
+  - name: sglang_connector_dump_bytes_total
+    documentation: 'SGLang connector dump: Bytes transferred by successful storage calls,
+      local to this worker'
+  - name: "linker_adapter_dump_submit_errors_total"
     documentation: "SGLang connector dump: Storage submission failures"
-  - name: "sglang_connector_dump_wait_errors_total"
+  - name: sglang_connector_dump_submit_errors_total
+    documentation: 'SGLang connector dump: Storage submission failures'
+  - name: "linker_adapter_dump_wait_errors_total"
     documentation: "SGLang connector dump: Storage completion wait failures"
   # BEGIN GENERATED KV counter
   # -- AsuStore observability ------------------------------------------------
+  - name: sglang_connector_dump_wait_errors_total
+    documentation: 'SGLang connector dump: Storage completion wait failures'
   - name: "asu_lookup_requests_total"
     documentation: "AsuStore Lookup, prefix lookup and reverse lookup calls"
   - name: "asu_lookup_errors_total"
@@ -69,7 +89,6 @@ counter:
     documentation: "AsuStore Wait calls returning errors, including timeouts and task failures"
   - name: "asu_wait_timeouts_total"
     documentation: "AsuStore Wait calls returning timeout; a subset of wait errors"
-
   - name: "kv_client_query_requests_total"
     documentation: "Total KV client query submissions"
   - name: "kv_client_query_entries_total"
@@ -394,52 +413,63 @@ counter:
 
 # Gauge metrics configuration
   # Direct linker: per-worker counters and asynchronous operation timing.
-  - name: sglang_linker_lookup_requests_total
+  - name: linker_lookup_requests_total
     documentation: 'SGLang linker: Owner lookup attempts; excludes neutral non-owner responses'
-  - name: sglang_linker_lookup_errors_total
+  - name: linker_lookup_errors_total
     documentation: 'SGLang linker: Failed owner lookup attempts'
-  - name: sglang_linker_lookup_query_pages_total
+  - name: linker_lookup_query_pages_total
     documentation: 'SGLang linker: Full requested KV pages on successful owner lookups, including resumed
       prefixes; repeated lookups count again'
-  - name: sglang_linker_lookup_hit_pages_total
+  - name: linker_lookup_hit_pages_total
     documentation: 'SGLang linker: Maximum locally restorable KV page boundary on successful owner lookups;
       before cross-rank intersection, not final token reuse'
-  - name: sglang_linker_lookup_resumed_total
+  - name: linker_lookup_resumed_total
     documentation: 'SGLang linker: Owner lookup attempts with a previous hit boundary'
-  - name: sglang_linker_lookup_fallback_total
+  - name: linker_lookup_fallback_total
     documentation: 'SGLang linker: Per-group prefix probes restarted at page zero after the cached boundary
       disappeared'
-  - name: sglang_linker_lookup_skipped_total
+  - name: linker_lookup_skipped_total
     documentation: 'SGLang linker: Neutral lookup responses on non-owner ranks; not actual storage hits'
-  - name: sglang_linker_load_requests_total
+  - name: linker_load_requests_total
     documentation: 'SGLang linker: Requests accepted into the scheduler''s pending load set'
-  - name: sglang_linker_load_cancelled_requests_total
+  - name: linker_load_cancelled_requests_total
     documentation: 'SGLang linker: Pending requests removed by cancellation or reset before batching'
-  - name: sglang_linker_load_ready_layers_total
+  - name: linker_load_ready_layers_total
     documentation: 'SGLang linker: Logical layers published ready across load batches; not physical Store
       tasks'
-  - name: sglang_linker_offload_skipped_total
+  - name: linker_offload_skipped_total
     documentation: 'SGLang linker: Offload calls acknowledged on non-owner ranks without storage I/O'
-  - name: sglang_linker_load_check_errors_total
+  - name: linker_load_check_errors_total
     documentation: 'SGLang linker: Physical load tasks with a Check failure; counted separately from Wait failures'
-  - name: sglang_linker_dump_check_errors_total
+  - name: linker_dump_check_errors_total
     documentation: 'SGLang linker: Physical dump tasks with a Check failure; counted separately from Wait failures'
-  - name: sglang_linker_load_operations_total
+  - name: linker_load_operations_total
     documentation: 'SGLang linker: Enqueued load batches'
-  - name: sglang_linker_load_started_total
+  - name: linker_load_started_total
     documentation: 'SGLang linker: Dequeued load batches, before event synchronization and preparation'
-  - name: sglang_linker_load_completed_total
+  - name: linker_load_completed_total
     documentation: 'SGLang linker: Finished load batches, including failures; before ordered publication'
-  - name: sglang_linker_load_errors_total
+  - name: linker_load_errors_total
     documentation: 'SGLang linker: Failed load batches, including preparation, submission and completion
       errors'
-  - name: sglang_linker_offload_operations_total
+  - name: linker_prefetch_operations_total
+    documentation: 'SGLang linker: Enqueued prefetch batches'
+  - name: linker_prefetch_started_total
+    documentation: 'SGLang linker: Dequeued prefetch batches, before event synchronization
+      and preparation'
+  - name: linker_prefetch_completed_total
+    documentation: 'SGLang linker: Finished prefetch batches, including failures; before
+      ordered publication'
+  - name: linker_prefetch_errors_total
+    documentation: 'SGLang linker: Failed prefetch batches, including preparation, submission
+      and completion errors'
+  - name: linker_offload_operations_total
     documentation: 'SGLang linker: Enqueued owner offload nodes'
-  - name: sglang_linker_offload_started_total
+  - name: linker_offload_started_total
     documentation: 'SGLang linker: Dequeued owner offload nodes, before event synchronization and preparation'
-  - name: sglang_linker_offload_completed_total
+  - name: linker_offload_completed_total
     documentation: 'SGLang linker: Finished owner offload nodes, including failures; before ordered publication'
-  - name: sglang_linker_offload_errors_total
+  - name: linker_offload_errors_total
     documentation: 'SGLang linker: Failed owner offload nodes, including preparation, submission and completion
       errors'
 
@@ -563,18 +593,42 @@ gauge:
 
 # Histogram metrics configuration
 histogram:
-  - name: "sglang_connector_load_pages"
+  - name: "linker_adapter_load_pages"
     documentation: "SGLang connector load: Successful storage batch size in pool pages; not deduplicated across TP/PP, pools or layers"
     buckets: [1, 5, 10, 50, 100, 128, 256, 512]
+  - name: sglang_connector_load_pages
+    documentation: 'SGLang connector load: Successful storage batch size in pool pages;
+      not deduplicated across TP/PP, pools or layers'
+    buckets:
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 128
+    - 256
+    - 512
   - name: "sglang_connector_load_duration_ms"
     documentation: "SGLang connector load: Storage submission-to-completion duration including failed attempts (ms); excludes buffer preparation and restoration"
     buckets: [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000]
   - name: "sglang_connector_load_bandwidth_gbps"
     documentation: "SGLang connector load: Successful call bytes divided by storage submission-to-completion time (GB/s, decimal bytes); not device-to-storage end-to-end bandwidth"
     buckets: [0.1, 0.5, 1, 5, 10, 20, 50, 100]
-  - name: "sglang_connector_dump_pages"
+  - name: "linker_adapter_dump_pages"
     documentation: "SGLang connector dump: Successful storage batch size in pool pages; not deduplicated across TP/PP, pools or layers"
     buckets: [1, 5, 10, 50, 100, 128, 256, 512]
+  - name: sglang_connector_dump_pages
+    documentation: 'SGLang connector dump: Successful storage batch size in pool pages;
+      not deduplicated across TP/PP, pools or layers'
+    buckets:
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 128
+    - 256
+    - 512
   - name: "sglang_connector_dump_duration_ms"
     documentation: "SGLang connector dump: Storage submission-to-completion duration including failed attempts (ms); excludes buffer preparation and restoration"
     buckets: [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000]
@@ -595,7 +649,6 @@ histogram:
   - name: "asu_wait_duration_ms"
     documentation: "AsuStore Wait call duration including failed and timed-out waits (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000, 30000, 60000]
-
   - name: "kv_client_task_enqueue_duration_seconds"
     documentation: "KV client API-to-enqueue duration"
     buckets: [0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0]
@@ -1022,7 +1075,7 @@ histogram:
   - name: "drampool_lookup_batch_total_duration_ms"
     documentation: "End-to-end LOOKUP batch duration across the full server-side request lifecycle: from requestQueue push to response-transfer terminal state, or the record leaving the Poller on a permanent response failure (ms)"
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-  - name: sglang_linker_load_layer_duration_ms
+  - name: linker_load_layer_duration_ms
     documentation: Per logical layer submission through worker wait and cleanup, including failures and ordered-reaping delay (ms)
     dynamic_labels:
     - layer
@@ -1040,7 +1093,7 @@ histogram:
     - 5000
     - 10000
   # Direct linker: per-worker counters and asynchronous operation timing.
-  - name: sglang_linker_lookup_duration_ms
+  - name: linker_lookup_duration_ms
     documentation: 'SGLang linker: Owner adapter lookup duration including failed attempts (ms)'
     buckets:
     - 0.01
@@ -1055,7 +1108,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_load_queue_duration_ms
+  - name: linker_load_queue_duration_ms
     documentation: 'SGLang linker load: Enqueue to worker dequeue time; excludes scheduler pending-load
       residence (ms)'
     buckets:
@@ -1071,7 +1124,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_load_duration_ms
+  - name: linker_load_duration_ms
     documentation: 'SGLang linker load: Enqueue to worker completion time including queueing, preparation
       and failures; excludes ordered-publication delay and downstream background persistence (ms)'
     buckets:
@@ -1087,7 +1140,40 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_offload_queue_duration_ms
+  - name: linker_prefetch_queue_duration_ms
+    documentation: 'SGLang linker prefetch: Enqueue to worker dequeue time; excludes
+      scheduler pending-load residence (ms)'
+    buckets:
+    - 0.01
+    - 0.1
+    - 0.5
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 500
+    - 1000
+    - 5000
+    - 10000
+  - name: linker_prefetch_duration_ms
+    documentation: 'SGLang linker prefetch: Enqueue to worker completion time including
+      queueing, preparation and failures; excludes ordered-publication delay and downstream
+      background persistence (ms)'
+    buckets:
+    - 0.01
+    - 0.1
+    - 0.5
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 500
+    - 1000
+    - 5000
+    - 10000
+  - name: linker_offload_queue_duration_ms
     documentation: 'SGLang linker offload: Enqueue to worker dequeue time; excludes scheduler pending-load
       residence (ms)'
     buckets:
@@ -1103,7 +1189,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_offload_duration_ms
+  - name: linker_offload_duration_ms
     documentation: 'SGLang linker offload: Enqueue to worker completion time including queueing, preparation
       and failures; excludes ordered-publication delay and downstream background persistence (ms)'
     buckets:
@@ -1119,8 +1205,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-
-  - name: sglang_linker_interface_entry_layer_rows_duration_ms
+  - name: linker_interface_entry_layer_rows_duration_ms
     documentation: Synchronous linker._entry_layer_rows call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1136,7 +1221,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_expand_duration_ms
+  - name: linker_interface_expand_duration_ms
     documentation: Synchronous linker._expand call duration including failures; not
       asynchronous I/O latency (ms)
     buckets:
@@ -1152,7 +1237,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_page_transfers_duration_ms
+  - name: linker_interface_page_transfers_duration_ms
     documentation: Synchronous linker._page_transfers call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1168,7 +1253,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_pool_metadata_duration_ms
+  - name: linker_interface_pool_metadata_duration_ms
     documentation: Synchronous linker._pool_metadata call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1184,7 +1269,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_select_store_ranks_duration_ms
+  - name: linker_interface_select_store_ranks_duration_ms
     documentation: Synchronous linker._select_store_ranks call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1200,7 +1285,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_wait_transfer_events_duration_ms
+  - name: linker_interface_wait_transfer_events_duration_ms
     documentation: Synchronous linker._wait_transfer_events call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1216,7 +1301,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_finish_layer_wise_loading_duration_ms
+  - name: linker_interface_finish_layer_wise_loading_duration_ms
     documentation: Synchronous linker.finish_layer_wise_loading call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1232,7 +1317,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_load_duration_ms
+  - name: linker_interface_load_duration_ms
     documentation: Synchronous linker.load call duration including failures; not asynchronous
       I/O latency (ms)
     buckets:
@@ -1248,7 +1333,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_lookup_duration_ms
+  - name: linker_interface_lookup_duration_ms
     documentation: Synchronous linker.lookup call duration including failures; not asynchronous
       I/O latency (ms)
     buckets:
@@ -1264,7 +1349,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_offload_duration_ms
+  - name: linker_interface_offload_duration_ms
     documentation: Synchronous linker.offload call duration including failures; not
       asynchronous I/O latency (ms)
     buckets:
@@ -1280,7 +1365,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_interface_start_layer_wise_loading_duration_ms
+  - name: linker_interface_start_layer_wise_loading_duration_ms
     documentation: Synchronous linker.start_layer_wise_loading call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1296,7 +1381,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_block_ids_duration_ms
+  - name: linker_adapter_interface_block_ids_duration_ms
     documentation: Synchronous adapter._block_ids call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1312,7 +1397,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_ensure_store_schema_duration_ms
+  - name: linker_adapter_interface_ensure_store_schema_duration_ms
     documentation: Synchronous adapter._ensure_store_schema call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1328,7 +1413,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_estimate_gc_capacities_duration_ms
+  - name: linker_adapter_interface_estimate_gc_capacities_duration_ms
     documentation: Synchronous adapter._estimate_gc_capacities call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1344,7 +1429,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_prepare_transfers_duration_ms
+  - name: linker_adapter_interface_prepare_transfers_duration_ms
     documentation: Synchronous adapter._prepare_transfers call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1360,7 +1445,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_submit_dump_duration_ms
+  - name: linker_adapter_interface_submit_dump_duration_ms
     documentation: Synchronous adapter._submit_dump call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1376,7 +1461,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_transfer_layout_duration_ms
+  - name: linker_adapter_interface_transfer_layout_duration_ms
     documentation: Synchronous adapter._transfer_layout call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1392,7 +1477,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_lookup_duration_ms
+  - name: linker_adapter_interface_lookup_duration_ms
     documentation: Synchronous adapter.lookup call duration including failures; not
       asynchronous I/O latency (ms)
     buckets:
@@ -1408,7 +1493,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_prepare_load_duration_ms
+  - name: linker_adapter_interface_prepare_load_duration_ms
     documentation: Synchronous adapter.prepare_load call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1424,7 +1509,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_register_device_pools_duration_ms
+  - name: linker_adapter_interface_register_device_pools_duration_ms
     documentation: Synchronous adapter.register_device_pools call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1440,7 +1525,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_submit_offload_duration_ms
+  - name: linker_adapter_interface_submit_offload_duration_ms
     documentation: Synchronous adapter.submit_offload call duration including failures;
       not asynchronous I/O latency (ms)
     buckets:
@@ -1456,7 +1541,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_adapter_interface_submit_prepared_load_layer_duration_ms
+  - name: linker_adapter_interface_submit_prepared_load_layer_duration_ms
     documentation: Synchronous adapter.submit_prepared_load_layer call duration including
       failures; not asynchronous I/O latency (ms)
     buckets:
@@ -1472,7 +1557,39 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_load_prepare_duration_ms
+  - name: linker_load_indices_sync_duration_ms
+    documentation: Load worker wall time waiting for indices readiness, including failures
+      (ms)
+    buckets:
+    - 0.01
+    - 0.1
+    - 0.5
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 500
+    - 1000
+    - 5000
+    - 10000
+  - name: linker_prefetch_prepare_duration_ms
+    documentation: Prefetch worker preparation wall-clock duration including failures
+      (ms)
+    buckets:
+    - 0.01
+    - 0.1
+    - 0.5
+    - 1
+    - 5
+    - 10
+    - 50
+    - 100
+    - 500
+    - 1000
+    - 5000
+    - 10000
+  - name: linker_load_prepare_duration_ms
     documentation: Worker/lookup load_prepare phase wall-clock duration including failures
       (ms)
     buckets:
@@ -1488,7 +1605,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_offload_prepare_duration_ms
+  - name: linker_offload_prepare_duration_ms
     documentation: Worker/lookup offload_prepare phase wall-clock duration including
       failures (ms)
     buckets:
@@ -1504,7 +1621,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_offload_io_duration_ms
+  - name: linker_offload_io_duration_ms
     documentation: Worker/lookup offload_io phase wall-clock duration including failures
       (ms)
     buckets:
@@ -1520,7 +1637,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_lookup_expand_duration_ms
+  - name: linker_lookup_expand_duration_ms
     documentation: Completed lookup_expand phase wall-clock duration (ms); failures are covered by interface timing
     buckets:
     - 0.01
@@ -1535,7 +1652,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_lookup_prepare_duration_ms
+  - name: linker_lookup_prepare_duration_ms
     documentation: Completed lookup_prepare phase wall-clock duration (ms); failures are covered by interface timing
     buckets:
     - 0.01
@@ -1550,7 +1667,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-  - name: sglang_linker_lookup_result_duration_ms
+  - name: linker_lookup_result_duration_ms
     documentation: Completed lookup_result phase wall-clock duration (ms); failures are covered by interface timing
     buckets:
     - 0.01
@@ -1565,8 +1682,7 @@ histogram:
     - 1000
     - 5000
     - 10000
-
-  - name: sglang_linker_load_layer_wait_duration_ms
+  - name: linker_load_layer_wait_duration_ms
     documentation: Consumer wait_until call duration by logical layer, including ready callbacks, cleanup and failures; not pure GPU stall time (ms)
     dynamic_labels: [layer]
     buckets: [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000]

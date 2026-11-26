@@ -26,13 +26,14 @@ def get_linker_metric_definitions() -> dict:
     }
     histograms = [
         {
-            "name": "sglang_linker_lookup_duration_ms",
+            "name": "linker_lookup_duration_ms",
             "documentation": "SGLang linker: Owner adapter lookup duration including failed attempts (ms)",
             "buckets": [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000],
         }
     ]
     for operation, unit in (
         ("load", "load batches"),
+        ("prefetch", "prefetch batches"),
         ("offload", "owner offload nodes"),
     ):
         counters.update(
@@ -55,7 +56,7 @@ def get_linker_metric_definitions() -> dict:
         ):
             histograms.append(
                 {
-                    "name": f"sglang_linker_{operation}_{suffix}",
+                    "name": f"linker_{operation}_{suffix}",
                     "documentation": f"SGLang linker {operation}: {description} (ms)",
                     "buckets": [
                         0.01,
@@ -75,7 +76,7 @@ def get_linker_metric_definitions() -> dict:
             )
     return {
         "counter": [
-            {"name": f"sglang_linker_{name}", "documentation": f"SGLang linker: {doc}"}
+            {"name": f"linker_{name}", "documentation": f"SGLang linker: {doc}"}
             for name, doc in counters.items()
         ],
         "histogram": histograms,
@@ -96,32 +97,64 @@ def get_default_sglang_metrics_config() -> dict:
     config["consumers"] = {"multiproc": True, "vllm_connector": False}
     config["counter"] = [
         {
+            "name": "linker_adapter_load_requests_total",
+            "documentation": "SGLang connector load: Physical storage transfer calls attempted, per worker and pool or layer",
+        },
+        {
             "name": "sglang_connector_load_requests_total",
             "documentation": "SGLang connector load: Physical storage transfer calls attempted, per worker and pool or layer",
+        },
+        {
+            "name": "linker_adapter_load_bytes_total",
+            "documentation": "SGLang connector load: Bytes transferred by successful storage calls, local to this worker",
         },
         {
             "name": "sglang_connector_load_bytes_total",
             "documentation": "SGLang connector load: Bytes transferred by successful storage calls, local to this worker",
         },
         {
+            "name": "linker_adapter_load_submit_errors_total",
+            "documentation": "SGLang connector load: Storage submission failures",
+        },
+        {
             "name": "sglang_connector_load_submit_errors_total",
             "documentation": "SGLang connector load: Storage submission failures",
+        },
+        {
+            "name": "linker_adapter_load_wait_errors_total",
+            "documentation": "SGLang connector load: Storage completion wait failures",
         },
         {
             "name": "sglang_connector_load_wait_errors_total",
             "documentation": "SGLang connector load: Storage completion wait failures",
         },
         {
+            "name": "linker_adapter_dump_requests_total",
+            "documentation": "SGLang connector dump: Physical storage transfer calls attempted, per worker and pool or layer",
+        },
+        {
             "name": "sglang_connector_dump_requests_total",
             "documentation": "SGLang connector dump: Physical storage transfer calls attempted, per worker and pool or layer",
+        },
+        {
+            "name": "linker_adapter_dump_bytes_total",
+            "documentation": "SGLang connector dump: Bytes transferred by successful storage calls, local to this worker",
         },
         {
             "name": "sglang_connector_dump_bytes_total",
             "documentation": "SGLang connector dump: Bytes transferred by successful storage calls, local to this worker",
         },
         {
+            "name": "linker_adapter_dump_submit_errors_total",
+            "documentation": "SGLang connector dump: Storage submission failures",
+        },
+        {
             "name": "sglang_connector_dump_submit_errors_total",
             "documentation": "SGLang connector dump: Storage submission failures",
+        },
+        {
+            "name": "linker_adapter_dump_wait_errors_total",
+            "documentation": "SGLang connector dump: Storage completion wait failures",
         },
         {
             "name": "sglang_connector_dump_wait_errors_total",
@@ -129,6 +162,11 @@ def get_default_sglang_metrics_config() -> dict:
         },
     ] + config["counter"]
     config["histogram"] = [
+        {
+            "name": "linker_adapter_load_pages",
+            "documentation": "SGLang connector load: Successful storage batch size in pool pages; not deduplicated across TP/PP, pools or layers",
+            "buckets": [1, 5, 10, 50, 100, 128, 256, 512],
+        },
         {
             "name": "sglang_connector_load_pages",
             "documentation": "SGLang connector load: Successful storage batch size in pool pages; not deduplicated across TP/PP, pools or layers",
@@ -143,6 +181,11 @@ def get_default_sglang_metrics_config() -> dict:
             "name": "sglang_connector_load_bandwidth_gbps",
             "documentation": "SGLang connector load: Successful call bytes divided by storage submission-to-completion time (GB/s, decimal bytes); not device-to-storage end-to-end bandwidth",
             "buckets": [0.1, 0.5, 1, 5, 10, 20, 50, 100],
+        },
+        {
+            "name": "linker_adapter_dump_pages",
+            "documentation": "SGLang connector dump: Successful storage batch size in pool pages; not deduplicated across TP/PP, pools or layers",
+            "buckets": [1, 5, 10, 50, 100, 128, 256, 512],
         },
         {
             "name": "sglang_connector_dump_pages",
@@ -168,7 +211,7 @@ def get_default_sglang_metrics_config() -> dict:
     ):
         config["histogram"].append(
             {
-                "name": f"sglang_linker_{name}",
+                "name": f"linker_{name}",
                 "documentation": documentation,
                 "dynamic_labels": ["layer"],
                 "buckets": [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000],
@@ -180,115 +223,123 @@ def get_default_sglang_metrics_config() -> dict:
     # Nested interface samples overlap; do not sum them into end-to-end time.
     for name, documentation in (
         (
-            "sglang_linker_interface_entry_layer_rows_duration_ms",
+            "linker_interface_entry_layer_rows_duration_ms",
             "Synchronous linker._entry_layer_rows call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_expand_duration_ms",
+            "linker_interface_expand_duration_ms",
             "Synchronous linker._expand call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_page_transfers_duration_ms",
+            "linker_interface_page_transfers_duration_ms",
             "Synchronous linker._page_transfers call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_pool_metadata_duration_ms",
+            "linker_interface_pool_metadata_duration_ms",
             "Synchronous linker._pool_metadata call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_select_store_ranks_duration_ms",
+            "linker_interface_select_store_ranks_duration_ms",
             "Synchronous linker._select_store_ranks call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_wait_transfer_events_duration_ms",
+            "linker_interface_wait_transfer_events_duration_ms",
             "Synchronous linker._wait_transfer_events call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_finish_layer_wise_loading_duration_ms",
+            "linker_interface_finish_layer_wise_loading_duration_ms",
             "Synchronous linker.finish_layer_wise_loading call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_load_duration_ms",
+            "linker_interface_load_duration_ms",
             "Synchronous linker.load call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_lookup_duration_ms",
+            "linker_interface_lookup_duration_ms",
             "Synchronous linker.lookup call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_offload_duration_ms",
+            "linker_interface_offload_duration_ms",
             "Synchronous linker.offload call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_interface_start_layer_wise_loading_duration_ms",
+            "linker_interface_start_layer_wise_loading_duration_ms",
             "Synchronous linker.start_layer_wise_loading call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_block_ids_duration_ms",
+            "linker_adapter_interface_block_ids_duration_ms",
             "Synchronous adapter._block_ids call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_ensure_store_schema_duration_ms",
+            "linker_adapter_interface_ensure_store_schema_duration_ms",
             "Synchronous adapter._ensure_store_schema call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_estimate_gc_capacities_duration_ms",
+            "linker_adapter_interface_estimate_gc_capacities_duration_ms",
             "Synchronous adapter._estimate_gc_capacities call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_prepare_transfers_duration_ms",
+            "linker_adapter_interface_prepare_transfers_duration_ms",
             "Synchronous adapter._prepare_transfers call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_submit_dump_duration_ms",
+            "linker_adapter_interface_submit_dump_duration_ms",
             "Synchronous adapter._submit_dump call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_transfer_layout_duration_ms",
+            "linker_adapter_interface_transfer_layout_duration_ms",
             "Synchronous adapter._transfer_layout call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_lookup_duration_ms",
+            "linker_adapter_interface_lookup_duration_ms",
             "Synchronous adapter.lookup call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_prepare_load_duration_ms",
+            "linker_adapter_interface_prepare_load_duration_ms",
             "Synchronous adapter.prepare_load call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_register_device_pools_duration_ms",
+            "linker_adapter_interface_register_device_pools_duration_ms",
             "Synchronous adapter.register_device_pools call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_submit_offload_duration_ms",
+            "linker_adapter_interface_submit_offload_duration_ms",
             "Synchronous adapter.submit_offload call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_adapter_interface_submit_prepared_load_layer_duration_ms",
+            "linker_adapter_interface_submit_prepared_load_layer_duration_ms",
             "Synchronous adapter.submit_prepared_load_layer call duration including failures; not asynchronous I/O latency (ms)",
         ),
         (
-            "sglang_linker_load_prepare_duration_ms",
+            "linker_load_indices_sync_duration_ms",
+            "Load worker wall time waiting for indices readiness, including failures (ms)",
+        ),
+        (
+            "linker_prefetch_prepare_duration_ms",
+            "Prefetch worker preparation wall-clock duration including failures (ms)",
+        ),
+        (
+            "linker_load_prepare_duration_ms",
             "Worker/lookup load_prepare phase wall-clock duration including failures (ms)",
         ),
         (
-            "sglang_linker_offload_prepare_duration_ms",
+            "linker_offload_prepare_duration_ms",
             "Worker/lookup offload_prepare phase wall-clock duration including failures (ms)",
         ),
         (
-            "sglang_linker_offload_io_duration_ms",
+            "linker_offload_io_duration_ms",
             "Worker/lookup offload_io phase wall-clock duration including failures (ms)",
         ),
         (
-            "sglang_linker_lookup_expand_duration_ms",
+            "linker_lookup_expand_duration_ms",
             "Completed lookup_expand phase wall-clock duration (ms); failures are covered by interface timing",
         ),
         (
-            "sglang_linker_lookup_prepare_duration_ms",
+            "linker_lookup_prepare_duration_ms",
             "Completed lookup_prepare phase wall-clock duration (ms); failures are covered by interface timing",
         ),
         (
-            "sglang_linker_lookup_result_duration_ms",
+            "linker_lookup_result_duration_ms",
             "Completed lookup_result phase wall-clock duration (ms); failures are covered by interface timing",
         ),
     ):
@@ -301,7 +352,7 @@ def get_default_sglang_metrics_config() -> dict:
         )
     config["histogram"].append(
         {
-            "name": "sglang_linker_load_layer_wait_duration_ms",
+            "name": "linker_load_layer_wait_duration_ms",
             "documentation": "Consumer wait_until call duration by logical layer, including ready callbacks, cleanup and failures; not pure GPU stall time (ms)",
             "dynamic_labels": ["layer"],
             "buckets": [0.01, 0.1, 0.5, 1, 5, 10, 50, 100, 500, 1000, 5000, 10000],

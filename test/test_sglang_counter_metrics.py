@@ -146,11 +146,26 @@ def test_wait_timing_preserves_failure_cleanup_and_callbacks(
             result = counter.wait_until(0)
             if native:
                 assert result == "native-result"
-    assert samples == [{"sglang_linker_load_layer_wait_duration_ms_0": 250}]
+    assert samples == [{"linker_load_layer_wait_duration_ms_0": 250}]
     if native:
         counter.callback.assert_called_once_with()
     else:
         assert counter.futures == {}  # final-layer cleanup is unchanged
+
+
+def test_native_blocked_seconds_bypasses_ucm_call_timer(native_module):
+    module, _ = native_module
+    counters.install_counter_metrics()
+    counter = module.LayerWiseLoadCounter()
+    counter.blocked_seconds = {}
+    counter.futures[0][0].set_result(None)
+    with patch.object(
+        metrics_module,
+        "time",
+        types.SimpleNamespace(perf_counter=Mock(side_effect=AssertionError("clock"))),
+    ):
+        assert counter.wait_until(0) == "native-result"
+    counter.callback.assert_called_once()
 
 
 def test_disabled_inactive_invalid_calls_do_not_sample(native_module):
@@ -205,7 +220,7 @@ def test_actual_wait_blocks_until_complete():
             counter.complete(0, 0)
             thread.join(2)
     assert len(samples) == 1
-    assert samples[0]["sglang_linker_load_layer_wait_duration_ms_0"] >= 0
+    assert samples[0]["linker_load_layer_wait_duration_ms_0"] >= 0
 
 
 def test_consumer_wait_exports_layer_label(tmp_path):
@@ -244,7 +259,7 @@ counter.wait_until(1)
 io_metrics.shutdown_metrics_logger(logger)
 assert not io_metrics.counter_metrics_enabled()
 counter.wait_until(1)  # disabled: no clock read or extra sample after shutdown
-assert value("ucm:sglang_linker_load_layer_wait_duration_ms_count", layer="1") == 1
-assert value("ucm:sglang_linker_load_layer_wait_duration_ms_sum", layer="1") == 125
+assert value("ucm:linker_load_layer_wait_duration_ms_count", layer="1") == 1
+assert value("ucm:linker_load_layer_wait_duration_ms_sum", layer="1") == 125
 """,
     )

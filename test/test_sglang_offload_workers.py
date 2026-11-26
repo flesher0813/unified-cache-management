@@ -98,7 +98,7 @@ class OffloadWorkerTest(unittest.TestCase):
 
         def record(values):
             samples.append(values)
-            if values.get("sglang_linker_offload_completed_total"):
+            if values.get("linker_offload_completed_total"):
                 completed.set()
 
         self.enterContext(patch.object(metrics_module, "record_metrics", record))
@@ -112,22 +112,22 @@ class OffloadWorkerTest(unittest.TestCase):
         self.assertTrue(completed.wait(2))
         self.assertTrue(self.obj._offload_results.empty())
         self.assertEqual(
-            sum(s.get("sglang_linker_offload_completed_total", 0) for s in samples), 1
+            sum(s.get("linker_offload_completed_total", 0) for s in samples), 1
         )
         self.assertEqual(
-            sum("sglang_linker_offload_io_duration_ms" in s for s in samples), 1
+            sum("linker_offload_io_duration_ms" in s for s in samples), 1
         )
         self.complete["A"].set()
         self.assertTrue(self.obj._offload_results.get(timeout=2))
         self.assertTrue(self.obj._offload_results.get(timeout=2))
         self.assertEqual(
-            sum(s.get("sglang_linker_offload_completed_total", 0) for s in samples), 2
+            sum(s.get("linker_offload_completed_total", 0) for s in samples), 2
         )
         self.assertEqual(
-            sum(s.get("sglang_linker_offload_operations_total", 0) for s in samples), 2
+            sum(s.get("linker_offload_operations_total", 0) for s in samples), 2
         )
         self.assertEqual(
-            sum(s.get("sglang_linker_offload_errors_total", 0) for s in samples), 0
+            sum(s.get("linker_offload_errors_total", 0) for s in samples), 0
         )
 
     def test_phase_timers_settle_once_on_failure(self):
@@ -147,9 +147,9 @@ class OffloadWorkerTest(unittest.TestCase):
             self.assertFalse(self.obj._offload_results.get(timeout=2))
         for name in ("offload_prepare", "offload_io"):
             values = [
-                s[f"sglang_linker_{name}_duration_ms"]
+                s[f"linker_{name}_duration_ms"]
                 for s in samples
-                if f"sglang_linker_{name}_duration_ms" in s
+                if f"linker_{name}_duration_ms" in s
             ]
             self.assertEqual(len(values), 2)
             self.assertTrue(all(v >= 0 for v in values))
@@ -170,10 +170,10 @@ class OffloadWorkerTest(unittest.TestCase):
             self.enqueue("A")
             self.assertFalse(self.obj._offload_results.get(timeout=2))
         self.assertEqual(
-            sum("sglang_linker_offload_prepare_duration_ms" in s for s in samples), 1
+            sum("linker_offload_prepare_duration_ms" in s for s in samples), 1
         )
         self.assertFalse(
-            any("sglang_linker_offload_io_duration_ms" in s for s in samples)
+            any("linker_offload_io_duration_ms" in s for s in samples)
         )
 
     def test_pending_tasks_do_not_block_new_submissions(self):

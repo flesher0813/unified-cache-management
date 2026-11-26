@@ -109,6 +109,7 @@ class _PrefetchLoad:
     transfers: list[PoolTransfer]
     ready_events: list[object]
     future: Future[bool]
+    observation: LinkerOperation | None = None
 
 
 class UcmDirectLinker(UnifiedCacheLinker):
@@ -272,7 +273,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
     def _record_metrics(self, **values):
         if self._metrics_enabled:
             record_metrics(
-                {f"sglang_linker_{key}": value for key, value in values.items()}
+                {f"linker_{key}": value for key, value in values.items()}
             )
 
     @_record_interface_duration
@@ -823,7 +824,8 @@ class UcmDirectLinker(UnifiedCacheLinker):
         self._freeze_gc_once()
         ready_events = self._record_transfer_events()
         future: Future[bool] = Future()
-        self._load_queue.put(_PrefetchLoad(expanded, ready_events, future))
+        observation = LinkerOperation.begin(self._metrics_enabled, "prefetch")
+        self._load_queue.put(_PrefetchLoad(expanded, ready_events, future, observation))
         return future
 
     def cancel_queued_load(self, rid: str) -> bool:
@@ -859,10 +861,21 @@ class UcmDirectLinker(UnifiedCacheLinker):
         return events
 
     @_record_interface_duration
-    def _wait_transfer_events(self, events: list[object]) -> int:
+    def _wait_transfer_events(
+        self, events: list[object], *, measure_load_indices: bool = False
+    ) -> int:
         # Address preparation reads indices on CPU. Only the dependency on
         # earlier device-page use can be delegated to Cache's copy streams.
-        events[0].synchronize()
+        timings = {}
+        start_timing(
+            timings,
+            "load_indices_sync_duration_ms",
+            measure_load_indices and self._metrics_enabled,
+        )
+        try:
+            events[0].synchronize()
+        finally:
+            finish_timing(timings, "load_indices_sync_duration_ms")
         if len(events) == 1:
             return 0
         forward_done = events[1]
@@ -912,7 +925,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     counter_index = -1
                     pending = {"prefetch": task.transfers}
                     ready_events = task.ready_events
-                    observation = None
+                    observation = task.observation
                 else:
                     counter_index, pending, ready_events, observation = task
                 if observation is not None:
@@ -920,11 +933,16 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 landed = True
                 active_layer = -1
                 timings = {}
+                prepare_metric = (
+                    "prefetch_prepare_duration_ms"
+                    if prefetch
+                    else "load_prepare_duration_ms"
+                )
                 try:
-                    start_timing(
-                        timings, "load_prepare_duration_ms", self._metrics_enabled
+                    start_timing(timings, prepare_metric, self._metrics_enabled)
+                    prerequisite_handle = self._wait_transfer_events(
+                        ready_events, measure_load_indices=True
                     )
-                    prerequisite_handle = self._wait_transfer_events(ready_events)
                     page_transfers = [
                         transfer
                         for request in pending.values()
@@ -933,7 +951,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                         )
                     ]
                     prepared_transfers = self.adapter.prepare_load(page_transfers)
-                    finish_timing(timings, "load_prepare_duration_ms")
+                    finish_timing(timings, prepare_metric)
                     # Keep submitting without blocking on an earlier layer.
                     # Reap ready layers between submissions so the first layer
                     # can start computing before the entire batch is submitted.
@@ -1024,7 +1042,7 @@ class UcmDirectLinker(UnifiedCacheLinker):
                         list(pending),
                     )
                 finally:
-                    finish_timing(timings, "load_prepare_duration_ms")
+                    finish_timing(timings, prepare_metric)
                     if observation is not None:
                         observation.finish(landed)
                     if prefetch:
