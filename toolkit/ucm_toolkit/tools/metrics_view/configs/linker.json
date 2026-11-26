@@ -1,0 +1,356 @@
+{
+  "title": "SGLang Direct Linker",
+  "metrics": [
+    {
+      "name": "Forward blocked time per load batch",
+      "source": "sglang:linker_forward_wait_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Post-forward load completion wait",
+      "source": "sglang:linker_finish_wait_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Host-observed offload duration",
+      "source": "sglang:linker_offload_duration_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Offloads in flight",
+      "source": "sglang:linker_offloads_in_flight",
+      "type": "gauge",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "aggregate": "sum"
+    },
+    {
+      "name": "Load tokens",
+      "type": "promql",
+      "expr": "sum by (url, model_name, mode) (rate(sglang:linker_load_tokens_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "mode"
+      ],
+      "unit": "tokens/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Prefetch requests",
+      "type": "promql",
+      "expr": "sum by (url, model_name, outcome) (rate(sglang:linker_prefetch_requests_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "outcome"
+      ],
+      "unit": "requests/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Linker failures",
+      "type": "promql",
+      "expr": "sum by (url, model_name, stage) (rate(sglang:linker_failures_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "stage"
+      ],
+      "unit": "failures/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Load queue",
+      "source": "ucm:linker_load_queue_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Prefetch queue",
+      "source": "ucm:linker_prefetch_queue_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Load preparation",
+      "source": "ucm:linker_load_prepare_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Prefetch preparation",
+      "source": "ucm:linker_prefetch_prepare_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Load indices synchronization",
+      "source": "ucm:linker_load_indices_sync_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Layer load to worker completion",
+      "source": "ucm:linker_load_layer_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id",
+        "layer"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Layer consumer call duration (compatibility)",
+      "source": "ucm:linker_load_layer_wait_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id",
+        "layer"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Offload queue",
+      "source": "ucm:linker_offload_queue_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Offload preparation",
+      "source": "ucm:linker_offload_prepare_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Worker offload I/O duration",
+      "source": "ucm:linker_offload_io_duration_ms",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "ms",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Adapter load throughput",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_load_bytes_total[$__rate_interval])) / 1e9",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "GB/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Adapter load submit errors",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_load_submit_errors_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "errors/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Adapter load wait errors",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_load_wait_errors_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "errors/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Adapter dump throughput",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_dump_bytes_total[$__rate_interval])) / 1e9",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "GB/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Adapter dump submit errors",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_dump_submit_errors_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "errors/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Adapter dump wait errors",
+      "type": "promql",
+      "expr": "sum by (url, model_name, worker_id) (rate(ucm:linker_adapter_dump_wait_errors_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "worker_id"
+      ],
+      "unit": "errors/s",
+      "aggregate": "sum"
+    }
+  ]
+}

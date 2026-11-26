@@ -1,0 +1,146 @@
+{
+  "title": "SGLang HiCache",
+  "metrics": [
+    {
+      "name": "Device to host backup duration",
+      "source": "sglang:hicache_backup_duration_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L2 to L3 backup duration",
+      "source": "sglang:hicache_backup_storage_duration_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Host to device load-back duration",
+      "source": "sglang:load_back_duration_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L3 prefetch pages per operation",
+      "source": "sglang:prefetch_pgs",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "pages",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L3 backup pages per operation",
+      "source": "sglang:backup_pgs",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "pages",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L3 prefetch bandwidth per operation",
+      "source": "sglang:prefetch_bandwidth",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "GB/s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L3 backup bandwidth per operation",
+      "source": "sglang:backup_bandwidth",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "GB/s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "L3 prefetch hit tokens",
+      "type": "promql",
+      "expr": "sum by (url, model_name) (rate(sglang:storage_prefetch_hit_tokens_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "tokens/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "L3 backup failed tokens",
+      "type": "promql",
+      "expr": "sum by (url, model_name) (rate(sglang:hicache_storage_backup_failed_tokens_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "tokens/s",
+      "aggregate": "sum"
+    }
+  ]
+}

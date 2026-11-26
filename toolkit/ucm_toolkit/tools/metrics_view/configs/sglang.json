@@ -1,0 +1,127 @@
+{
+  "title": "SGLang Service",
+  "metrics": [
+    {
+      "name": "Time to first token",
+      "source": "sglang:time_to_first_token_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "End-to-end request latency",
+      "source": "sglang:e2e_request_latency_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Time per output token",
+      "source": "sglang:request_time_per_output_token_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Scheduler queue time",
+      "source": "sglang:queue_time_seconds",
+      "type": "histogram",
+      "avg": true,
+      "quantiles": [
+        0.5,
+        0.9,
+        0.99
+      ],
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "s",
+      "aggregate": "avg"
+    },
+    {
+      "name": "Running requests",
+      "source": "sglang:num_running_reqs",
+      "type": "gauge",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "aggregate": "sum"
+    },
+    {
+      "name": "Queued requests",
+      "source": "sglang:num_queue_reqs",
+      "type": "gauge",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "aggregate": "sum"
+    },
+    {
+      "name": "Prompt token throughput",
+      "type": "promql",
+      "expr": "sum by (url, model_name) (rate(sglang:prompt_tokens_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "tokens/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Generation token throughput",
+      "type": "promql",
+      "expr": "sum by (url, model_name) (rate(sglang:generation_tokens_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name"
+      ],
+      "unit": "tokens/s",
+      "aggregate": "sum"
+    },
+    {
+      "name": "Forward execution time rate",
+      "type": "promql",
+      "expr": "sum by (url, model_name, category) (rate(sglang:forward_execution_seconds_total[$__rate_interval]))",
+      "group_by": [
+        "url",
+        "model_name",
+        "category"
+      ],
+      "unit": "s/s",
+      "aggregate": "sum"
+    }
+  ]
+}

@@ -1013,7 +1013,10 @@ vllm:num_requests_running{worker_id="1"} 5
             [path.name for path in list_preset_configs()],
             [
                 "connector.json",
+                "hicache.json",
+                "linker.json",
                 "metrics_lite.json",
+                "sglang.json",
                 "store.json",
                 "vllm.json",
             ],
@@ -1035,7 +1038,7 @@ vllm:num_requests_running{worker_id="1"} 5
     def test_dashboard_presets_parse_every_expression(self):
         engine = SnapshotQueryEngine([])
 
-        for name in ("vllm", "connector", "store"):
+        for name in ("vllm", "connector", "store", "sglang", "hicache", "linker"):
             config = load_config(name)
             for metric in config["metrics"]:
                 engine.query_config({"metrics": [metric]})

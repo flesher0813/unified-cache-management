@@ -39,6 +39,16 @@ Built-in configurations and their Grafana dashboard mappings:
 | `vllm` | `examples/metrics/grafana_vllm.json` |
 | `connector` | `examples/metrics/grafana_connector.json` |
 | `store` | `examples/metrics/grafana_store.json` |
+| `sglang` | SGLang TTFT, request latency, token throughput, scheduler queues, and forward execution time |
+| `hicache` | SGLang-native HiCache backup and load-back latency, L3 page counts, and bandwidth |
+| `linker` | SGLang-native Linker waits and UCM worker, layer, and adapter metrics |
+
+For distributed SGLang, pass one `--url` per node to `start` and leave
+`--config` unset to collect metrics for all three presets in the same database.
+Query the same window with `--config sglang`, `--config hicache`, or
+`--config linker`. Results retain the scrape `url`, and UCM layer timings
+also retain `worker_id` and `layer`. Available series depend on the SGLang
+version, enabled backend, and workload.
 
 `vllm`, `connector`, and `store` display all data from the corresponding Grafana dashboard. Single-curve data uses the panel name; multi-curve data uses `<panel_name>: <curve_name>`.
 
