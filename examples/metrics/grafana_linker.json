@@ -56,10 +56,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"ucm:sglang_.*\"}, job)",
+          "query": "label_values({__name__=~\"ucm:linker_.*\"}, job)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"ucm:sglang_.*\"}, job)",
+        "definition": "label_values({__name__=~\"ucm:linker_.*\"}, job)",
         "current": {
           "selected": true,
           "text": "All",
@@ -84,10 +84,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\"}, model_name)",
+          "query": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\"}, model_name)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\"}, model_name)",
+        "definition": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\"}, model_name)",
         "current": {
           "selected": true,
           "text": "All",
@@ -112,10 +112,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
+          "query": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
+        "definition": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
         "current": {
           "selected": true,
           "text": "All",
@@ -167,10 +167,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}, worker_id)",
+          "query": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}, worker_id)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"ucm:sglang_.*\",job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}, worker_id)",
+        "definition": "label_values({__name__=~\"ucm:linker_.*\",job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}, worker_id)",
         "current": {
           "selected": true,
           "text": "All",
@@ -3477,7 +3477,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(ucm:sglang_connector_load_pages_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(ucm:sglang_connector_load_pages_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval]))",
+          "expr": "sum by (${perWorker:raw}) (rate(ucm:linker_adapter_load_pages_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(ucm:linker_adapter_load_pages_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval]))",
           "legendFormat": "avg {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "A"
@@ -3488,7 +3488,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p50 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "B"
@@ -3499,7 +3499,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p90 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "C"
@@ -3510,7 +3510,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_load_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p99 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "D"
@@ -3608,7 +3608,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(ucm:sglang_connector_dump_pages_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(ucm:sglang_connector_dump_pages_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval]))",
+          "expr": "sum by (${perWorker:raw}) (rate(ucm:linker_adapter_dump_pages_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(ucm:linker_adapter_dump_pages_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval]))",
           "legendFormat": "avg {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "A"
@@ -3619,7 +3619,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p50 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "B"
@@ -3630,7 +3630,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p90 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "C"
@@ -3641,7 +3641,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(ucm:sglang_connector_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(ucm:linker_adapter_dump_pages_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\",worker_id=~\"$worker_id\"}[$__rate_interval])))",
           "legendFormat": "p99 {{model_name}} {{instance}} {{worker_id}}",
           "range": true,
           "refId": "D"

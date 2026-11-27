@@ -521,6 +521,12 @@ class DashboardTest(unittest.TestCase):
                 item["name"] + suffix for suffix in ("_sum", "_count", "_bucket")
             )
         board = json.loads((root / "grafana_linker.json").read_text(encoding="utf-8"))
+        variables = {item["name"]: item for item in board["templating"]["list"]}
+        for name in ("job", "model_name", "instance", "worker_id"):
+            variable = variables[name]
+            query = variable["query"]["query"]
+            self.assertIn('__name__=~"ucm:linker_.*"', query)
+            self.assertEqual(query, variable["definition"])
         ids = [panel["id"] for panel in board["panels"]]
         self.assertEqual(len(ids), len(set(ids)))
         import re
@@ -532,7 +538,7 @@ class DashboardTest(unittest.TestCase):
                 self.assertNotIn("or vector(0)", expr)
                 if "ucm:" in expr:
                     self.assertIn('worker_id=~"$worker_id"', expr)
-                for name in re.findall(r"ucm:(linker_\w+)\{", expr):
+                for name in re.findall(r"ucm:(\w+)\{", expr):
                     self.assertIn(name, names)
                     queried.add(name)
                 self.assertNotIn("${ucm_prefix}", expr)
