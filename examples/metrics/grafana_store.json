@@ -201,7 +201,8 @@
   "id": null,
   "tags": [
     "ucm-vllm-connector-metrics",
-    "pipeline-store"
+    "pipeline-store",
+    "ucm-sglang-metrics"
   ],
   "description": "UCM Store 性能指标，按 Cache、Mooncake 和 Posix Store 分组。同组其他 UCM dashboard 可通过页头链接访问。",
   "links": [

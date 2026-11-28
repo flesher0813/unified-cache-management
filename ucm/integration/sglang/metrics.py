@@ -19,11 +19,6 @@ logger = logging.getLogger(__name__)
 _active_metrics_logger = None
 
 
-def counter_metrics_enabled():
-    """Counter patches sample only while this worker's UCM metrics logger is active."""
-    return _active_metrics_logger is not None
-
-
 def create_metrics_logger(*, enabled, model_name, ranks, launch_config):
     """Register once per worker, before Store construction, using SGLang's dir."""
     global _active_metrics_logger

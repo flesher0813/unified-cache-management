@@ -276,7 +276,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 {f"linker_{key}": value for key, value in values.items()}
             )
 
-    @_record_interface_duration
     def _select_store_ranks(self, tp_group: Any, attn_cp_size: int) -> None:
         """Find shared-Cache peers for lookup deduplication and dump partitioning."""
         if (
@@ -354,7 +353,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
         }
         return UcmDirectStoreAdapter.from_config(extra_config or {}, identity)
 
-    @_record_interface_duration
     def _pool_metadata(self) -> list[UcmPoolMetadata]:
         metadata = []
         for bundle in self._bundles:
@@ -561,7 +559,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
                     )
         return layouts
 
-    @_record_interface_duration
     def _entry_layer_rows(
         self,
         entry: DevicePoolEntry,
@@ -576,7 +573,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
         )
         return pointer_matrix, layout.schema
 
-    @_record_interface_duration
     def _page_transfers(
         self,
         transfers: list[PoolTransfer],
@@ -681,16 +677,12 @@ class UcmDirectLinker(UnifiedCacheLinker):
             )
         return result
 
-    @_record_interface_duration
     def _expand(self, transfers: list[PoolTransfer], **kwargs) -> list[PoolTransfer]:
         return self.pool_group.resolve_transfers(transfers, **kwargs)
 
     @_record_interface_duration
     def lookup(self, rid: str, transfers: list[PoolTransfer]) -> list[int]:
-        timings = {}
-        start_timing(timings, "lookup_expand_duration_ms", self._metrics_enabled)
         expanded = self._expand(transfers)
-        finish_timing(timings, "lookup_expand_duration_ms")
         if not expanded:
             return []
         kv_transfer = next(
@@ -706,10 +698,8 @@ class UcmDirectLinker(UnifiedCacheLinker):
             # shared Cache/Posix view.
             self._record_metrics(lookup_skipped_total=1)
             return list(range(1, len(page_keys) + 1))
-        start_timing(timings, "lookup_prepare_duration_ms", self._metrics_enabled)
         lookup_transfers = self._page_transfers(expanded, for_io=False)
         if not lookup_transfers:
-            finish_timing(timings, "lookup_prepare_duration_ms")
             return []
         transfer_keys = tuple(
             (
@@ -735,8 +725,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
             )
         ):
             resume_from_pages = previous.hit_pages
-        finish_timing(timings, "lookup_prepare_duration_ms")
-        started = time.perf_counter() if self._metrics_enabled else None
         lookup_succeeded = False
         try:
             result = self.adapter.lookup(
@@ -757,10 +745,8 @@ class UcmDirectLinker(UnifiedCacheLinker):
             )
             raise
         finally:
-            if started is not None:
-                # Capture adapter latency before constructing or recording metrics.
+            if self._metrics_enabled:
                 values = {
-                    "lookup_duration_ms": (time.perf_counter() - started) * 1000,
                     "lookup_requests_total": 1,
                     "lookup_resumed_total": int(resume_from_pages > 0),
                 }
@@ -771,14 +757,12 @@ class UcmDirectLinker(UnifiedCacheLinker):
                 else:
                     values["lookup_errors_total"] = 1
                 self._record_metrics(**values)
-        start_timing(timings, "lookup_result_duration_ms", self._metrics_enabled)
         self._lookup_progress[rid] = _LookupProgress(
             tuple(page_keys), transfer_keys, result[-1] if result else 0
         )
         self._lookup_progress.move_to_end(rid)
         if len(self._lookup_progress) > _LOOKUP_PROGRESS_MAX_REQUESTS:
             self._lookup_progress.popitem(last=False)
-        finish_timing(timings, "lookup_result_duration_ms")
         return result
 
     @_record_interface_duration
@@ -860,7 +844,6 @@ class UcmDirectLinker(UnifiedCacheLinker):
             events.append(forward_done)
         return events
 
-    @_record_interface_duration
     def _wait_transfer_events(
         self, events: list[object], *, measure_load_indices: bool = False
     ) -> int:

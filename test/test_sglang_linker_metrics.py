@@ -259,7 +259,7 @@ class LinkerMetricsTest(unittest.TestCase):
         self.assertEqual(self.total("linker_lookup_query_pages_total"), 0)
         self.assertNotIn("r", obj._lookup_progress)
 
-    def test_lookup_records_one_batch_without_including_export_time(self):
+    def test_lookup_records_one_batch_and_interface_duration(self):
         obj, transfers = self.lookup_linker()
 
         def lookup(*args, **kwargs):
@@ -273,7 +273,7 @@ class LinkerMetricsTest(unittest.TestCase):
         obj.adapter.lookup.side_effect = lookup
         with patch.object(linker_module, "record_metrics", record):
             self.assertEqual(obj.lookup("r", transfers), [2, 4])
-        self.assertEqual(self.total("linker_lookup_duration_ms"), 250)
+        self.assertEqual(self.total("linker_interface_lookup_duration_ms"), 1250)
         self.assertEqual(self.total("linker_lookup_query_pages_total"), 4)
         self.assertEqual(self.total("linker_lookup_hit_pages_total"), 4)
         self.assertEqual(obj._lookup_progress["r"].hit_pages, 4)
@@ -538,24 +538,53 @@ class DashboardTest(unittest.TestCase):
                 self.assertNotIn("or vector(0)", expr)
                 if "ucm:" in expr:
                     self.assertIn('worker_id=~"$worker_id"', expr)
-                for name in re.findall(r"ucm:(\w+)\{", expr):
+                for name in re.findall(r'ucm:(\w+)(?=[{|"])', expr):
                     self.assertIn(name, names)
                     queried.add(name)
                 self.assertNotIn("${ucm_prefix}", expr)
-        for item in config["counter"]:
-            if item["name"].startswith("linker_"):
-                self.assertIn(item["name"], queried)
-        for name in (
+        counters = {"linker_adapter_load_bytes_total", "linker_adapter_dump_bytes_total"}
+        failures = [panel for panel in board["panels"] if panel["id"] in (22, 23, 24)]
+        self.assertEqual(len(failures), 3)
+        for panel in failures:
+            self.assertIn(
+                '__name__=~"ucm:.*(errors|failure_events)_total"',
+                panel["targets"][0]["expr"],
+            )
+        histograms = {
             "linker_load_layer_duration_ms",
-            "linker_load_layer_wait_duration_ms",
-        ):
-            for suffix in ("_sum", "_count", "_bucket"):
-                self.assertIn(name + suffix, queried)
+            "linker_load_duration_ms",
+            "linker_offload_duration_ms",
+            *(f"linker_interface_{method}_duration_ms" for method in (
+                "lookup", "load", "start_layer_wise_loading", "finish_layer_wise_loading", "offload"
+            )),
+        }
+        breakdown_histograms = {
+            f"linker_{operation}_{phase}duration_ms"
+            for operation in ("load", "offload")
+            for phase in ("", "queue_", "prepare_")
+        }
+        self.assertEqual(
+            queried,
+            counters
+            | {name + suffix for name in histograms for suffix in ("_sum", "_count", "_bucket")}
+            | {name + suffix for name in breakdown_histograms for suffix in ("_sum", "_count")},
+        )
         native = json.loads((root / "grafana_sglang.json").read_text(encoding="utf-8"))
         for panel in native["panels"]:
             for target in panel.get("targets", []):
-                self.assertIn("sglang:", target["expr"])
-                self.assertNotIn("ucm:", target["expr"])
+                expr = target["expr"]
+                if panel["id"] == 32 and target["refId"] == "C":
+                    self.assertIn("ucm:linker_lookup_hit_pages_total", expr)
+                    self.assertIn("ucm:linker_lookup_query_pages_total", expr)
+                    self.assertNotIn("sglang:", expr)
+                elif panel["id"] in (24, 25, 27, 28, 29, 30):
+                    self.assertIn("ucm:", expr)
+                    self.assertNotIn("sglang:", expr)
+                    self.assertNotIn("$engine", expr)
+                    self.assertNotIn("$worker_rank", expr)
+                else:
+                    self.assertIn("sglang:", expr)
+                    self.assertNotIn("ucm:", expr)
         self.assertFalse(list(root.glob("sglang*.json")))
 
 

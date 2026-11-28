@@ -56,10 +56,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"sglang:.*\"}, job)",
+          "query": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\"}, job)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"sglang:.*\"}, job)",
+        "definition": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\"}, job)",
         "current": {
           "selected": true,
           "text": "All",
@@ -67,7 +67,7 @@
         },
         "includeAll": true,
         "allValue": ".*",
-        "multi": true,
+        "multi": false,
         "options": [],
         "refresh": 1,
         "sort": 1,
@@ -84,18 +84,17 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"sglang:.*\",job=~\"$job\"}, model_name)",
+          "query": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\",job=~\"$job\"}, model_name)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"sglang:.*\",job=~\"$job\"}, model_name)",
+        "definition": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\",job=~\"$job\"}, model_name)",
         "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
+          "selected": false,
+          "text": "",
+          "value": ""
         },
-        "includeAll": true,
-        "allValue": ".*",
-        "multi": true,
+        "includeAll": false,
+        "multi": false,
         "options": [],
         "refresh": 1,
         "sort": 1,
@@ -112,18 +111,17 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "query": {
-          "query": "label_values({__name__=~\"sglang:.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
+          "query": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
           "refId": "StandardVariableQuery"
         },
-        "definition": "label_values({__name__=~\"sglang:.*\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
+        "definition": "label_values({__name__=~\"(sglang:.*|ucm:(posix|mooncake)_store_health)\",job=~\"$job\",model_name=~\"$model_name\"}, instance)",
         "current": {
-          "selected": true,
-          "text": "All",
-          "value": "$__all"
+          "selected": false,
+          "text": "",
+          "value": ""
         },
-        "includeAll": true,
-        "allValue": ".*",
-        "multi": true,
+        "includeAll": false,
+        "multi": false,
         "options": [],
         "refresh": 1,
         "sort": 1,
@@ -178,50 +176,243 @@
   "description": "SGLang native serving metrics only. Avg/P50/P90/P99 aggregate histogram buckets across the selected instances. UCM Linker and Store have separate dashboards.",
   "links": [
     {
-      "type": "link",
-      "title": "SGLang",
-      "url": "/d/ucm-sglang-native",
-      "includeVars": true,
+      "type": "dashboards",
+      "title": "Other UCM SGLang metrics dashboards",
+      "tags": [
+        "ucm-sglang-metrics"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
       "keepTime": true,
-      "targetBlank": false
-    },
-    {
-      "type": "link",
-      "title": "UCM Linker",
-      "url": "/d/ucm-sglang-linker",
-      "includeVars": true,
-      "keepTime": true,
-      "targetBlank": false
-    },
-    {
-      "type": "link",
-      "title": "UCM Store",
-      "url": "/d/ucm-vllm-pipeline-store",
-      "includeVars": true,
-      "keepTime": true,
+      "icon": "external link",
       "targetBlank": false
     }
   ],
   "panels": [
     {
-      "id": 1,
-      "type": "row",
-      "title": "Request Latency",
-      "collapsed": false,
-      "panels": [],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按所选时段统计请求的缓存复用和未命中输入 token。仅启用 UCM Direct Linker 时，device 对应 HBM 命中，host 对应逐层加载后纳入请求前缀的 UCM KV，storage 对应已归因的 UCM prefetch 复用。在 HiCache 场景中，host 和 storage 分别表示对应的缓存层。total 表示来源未细分的缓存命中。Missed 表示未复用的输入 token。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "gridPos": {
+        "h": 8,
+        "w": 12,
         "x": 0,
-        "y": 0,
-        "w": 24,
-        "h": 1
-      }
+        "y": 0
+      },
+      "id": 31,
+      "options": {
+        "displayLabels": [
+          "name",
+          "value",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (cache_source) (increase(sglang:cached_tokens_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{cache_source}}",
+          "range": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(sglang:uncached_prompt_tokens_histogram_sum{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "Missed",
+          "range": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Prefix Cache Query Breakdown",
+      "type": "piechart"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native SGLang histogram: sglang:e2e_request_latency_seconds. Avg/P50/P90/P99; missing series remain empty.",
+      "description": "各缓存来源的复用 token 速率除以同一筛选范围内的输入 token 速率。total 来源表示未细分来源的贡献，Overall 是所有来源的命中率。 UCM Linker Local Lookup Hit Rate 使用 owner 上报的本地命中页数除以查询页数，统计发生在跨 rank 归并前。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 60000,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "maxHeight": "50%",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (cache_source) (rate(sglang:cached_tokens_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) / scalar(sum(rate(sglang:prompt_tokens_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) > 0)",
+          "instant": false,
+          "legendFormat": "{{cache_source}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(sglang:cached_tokens_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) / (sum(rate(sglang:prompt_tokens_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) > 0)",
+          "instant": false,
+          "legendFormat": "Overall",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(ucm:linker_lookup_hit_pages_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) / (sum(rate(ucm:linker_lookup_query_pages_total{job=~\"$job\",model_name=~\"$model_name\",instance=~\"$instance\"}[$__rate_interval])) > 0)",
+          "instant": false,
+          "legendFormat": "UCM Linker Local Lookup Hit Rate",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "KV Cache Hit Rate Breakdown",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "端到端请求延迟，单位秒。指标 `sglang:e2e_request_latency_seconds`。 展示 avg、P50、P90、P95 和 P99。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -277,7 +468,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 1,
+        "y": 8,
         "w": 12,
         "h": 8
       },
@@ -338,6 +529,17 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, ${perWorker:raw}) (rate(sglang:e2e_request_latency_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:e2e_request_latency_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
           "legendFormat": "p99 {{model_name}} {{instance}}",
           "range": true,
@@ -352,7 +554,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native SGLang histogram: sglang:time_to_first_token_seconds. Avg/P50/P90/P99; missing series remain empty.",
+      "description": "每秒处理的输入 token 和生成的输出 token。查询对 `sglang:prompt_tokens_total` 和 `sglang:generation_tokens_total` 取速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -401,18 +603,18 @@
               }
             ]
           },
-          "unit": "s",
+          "unit": "suffix:tokens/s",
           "min": 0
         },
         "overrides": []
       },
       "gridPos": {
         "x": 12,
-        "y": 1,
+        "y": 8,
         "w": 12,
         "h": 8
       },
-      "id": 3,
+      "id": 8,
       "options": {
         "legend": {
           "calcs": [
@@ -436,8 +638,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "avg {{model_name}} {{instance}}",
+          "expr": "sum by (${perWorker:raw}) (rate(sglang:prompt_tokens_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "legendFormat": "prompt {{model_name}} {{instance}}",
           "range": true,
           "refId": "A"
         },
@@ -447,35 +649,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p50 {{model_name}} {{instance}}",
+          "expr": "sum by (${perWorker:raw}) (rate(sglang:generation_tokens_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "legendFormat": "generation {{model_name}} {{instance}}",
           "range": true,
           "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p90 {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p99 {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "D"
         }
       ],
-      "title": "Time To First Token",
+      "title": "Token Throughput",
       "type": "timeseries"
     },
     {
@@ -483,7 +663,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native SGLang histogram: sglang:inter_token_latency_seconds. Avg/P50/P90/P99; missing series remain empty.",
+      "description": "生成阶段相邻 token 之间的时间，单位秒。指标 `sglang:inter_token_latency_seconds`。 展示 avg、P50、P90、P95 和 P99。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -539,7 +719,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 16,
         "w": 12,
         "h": 8
       },
@@ -600,6 +780,17 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, ${perWorker:raw}) (rate(sglang:inter_token_latency_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:inter_token_latency_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
           "legendFormat": "p99 {{model_name}} {{instance}}",
           "range": true,
@@ -614,7 +805,127 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native SGLang histogram: sglang:queue_time_seconds. Avg/P50/P90/P99; missing series remain empty.",
+      "description": "当前运行和排队的请求数，按实例及 rank 展示。Waiting for Linker Prefetch 是 Waiting 的子集，表示等待队列中仍有 Linker 预读待完成的请求。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 60000,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "maxHeight": "50%",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sglang:num_running_reqs{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
+          "legendFormat": "num_running_reqs {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sglang:num_queue_reqs{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
+          "legendFormat": "num_queue_reqs {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sglang:linker_prefetch_waiting_requests{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
+          "legendFormat": "Waiting for Linker Prefetch {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Scheduler State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "从收到请求到生成首个 token 的时间，单位秒。指标 `sglang:time_to_first_token_seconds`。 展示 avg、P50、P90、P95 和 P99。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -669,9 +980,433 @@
         "overrides": []
       },
       "gridPos": {
-        "x": 12,
-        "y": 9,
+        "x": 0,
+        "y": 24,
         "w": 12,
+        "h": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "maxHeight": "50%",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by (${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "legendFormat": "avg {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p90 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:time_to_first_token_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p99 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Time To First Token",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "已用 KV token 槽位占比，按实例及 rank 展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 60000,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "maxHeight": "50%",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sglang:token_usage{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
+          "legendFormat": "token_usage {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "KV Cache Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按每个请求的输入 token 数分桶，颜色表示该时段内各长度桶的请求数。指标 `sglang:prompt_tokens_histogram`。对所选实例和模型合并统计。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "id": 10,
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "cellValues": {
+          "unit": "none"
+        },
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "min": 0,
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Spectral",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto",
+          "value": "Request count"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": true
+        },
+        "yAxis": {
+          "axisLabel": "Prompt Length",
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "none"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "sum by (le) (increase(sglang:prompt_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Request Prompt Length",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按每个请求的输出 token 数分桶，颜色表示该时段内各长度桶的请求数。指标 `sglang:generation_tokens_histogram`。对所选实例和模型合并统计。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "id": 11,
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "cellValues": {
+          "unit": "none"
+        },
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "min": 0,
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Spectral",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "rowsFrame": {
+          "layout": "auto",
+          "value": "Request count"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": true
+        },
+        "yAxis": {
+          "axisLabel": "Generation Length",
+          "axisPlacement": "left",
+          "reverse": false,
+          "unit": "none"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "disableTextWrap": false,
+          "editorMode": "builder",
+          "expr": "sum by (le) (increase(sglang:generation_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "fullMetaSearch": false,
+          "includeNullMetadata": true,
+          "instant": false,
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A",
+          "useBackend": false
+        }
+      ],
+      "title": "Request Generation Length",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "请求在调度队列中等待的时间，单位秒。指标 `sglang:queue_time_seconds`。 展示 avg、P50、P90、P95 和 P99。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": 60000,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 24,
         "h": 8
       },
       "id": 5,
@@ -731,6 +1466,17 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by (le, ${perWorker:raw}) (rate(sglang:queue_time_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{model_name}} {{instance}}",
+          "range": true,
+          "refId": "E"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
           "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:queue_time_seconds_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
           "legendFormat": "p99 {{model_name}} {{instance}}",
           "range": true,
@@ -745,81 +1491,34 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native SGLang request counters; rate over the selected interval.",
+      "description": "所选实例中上报的 YuanRong DRAM 和 SSD 使用率。",
       "fieldConfig": {
         "defaults": {
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit",
           "color": {
             "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps",
-          "min": 0
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
-        "y": 17,
+        "h": 8,
         "w": 12,
-        "h": 8
+        "x": 0,
+        "y": 48
       },
-      "id": 6,
+      "id": 24,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
+          "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "desc"
+          "sort": "none"
         }
       },
       "targets": [
@@ -829,8 +1528,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:num_requests_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "requests {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_dram_usage_ratio{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "instant": false,
+          "legendFormat": "YuanRong DRAM",
           "range": true,
           "refId": "A"
         },
@@ -840,217 +1540,48 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:num_aborted_requests_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "aborted {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_ssd_usage_ratio{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "instant": false,
+          "legendFormat": "YuanRong SSD",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Request Rate",
+      "title": "Store Capacity Watermark",
       "type": "timeseries"
-    },
-    {
-      "id": 7,
-      "type": "row",
-      "title": "Throughput and Request Length",
-      "collapsed": false,
-      "panels": [],
-      "gridPos": {
-        "x": 0,
-        "y": 25,
-        "w": 24,
-        "h": 1
-      }
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prompt and generation token rates from native counters.",
+      "description": "所选实例中上报的 YuanRong DRAM 和 SSD 已用字节与容量。",
       "fieldConfig": {
         "defaults": {
+          "min": 0,
+          "unit": "bytes",
           "color": {
             "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "suffix:tokens/s",
-          "min": 0
+          }
         },
         "overrides": []
       },
       "gridPos": {
-        "x": 0,
-        "y": 26,
+        "h": 8,
         "w": 12,
-        "h": 8
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:prompt_tokens_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "prompt {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:generation_tokens_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "generation {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Token Throughput",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Native scheduler generation-throughput gauge. Each series retains its rank labels.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "suffix:tokens/s",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
         "x": 12,
-        "y": 26,
-        "w": 12,
-        "h": 8
+        "y": 48
       },
-      "id": 9,
+      "id": 25,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
+          "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "desc"
+          "sort": "none"
         }
       },
       "targets": [
@@ -1060,106 +1591,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sglang:gen_throughput{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
-          "legendFormat": "__auto",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Token Generation Throughput",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Native token-count histogram: sglang:prompt_tokens_histogram.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "suffix:tokens",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 0,
-        "y": 34,
-        "w": 12,
-        "h": 8
-      },
-      "id": 10,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:prompt_tokens_histogram_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(sglang:prompt_tokens_histogram_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "avg {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_dram_used_bytes{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "YuanRong DRAM used",
           "range": true,
           "refId": "A"
         },
@@ -1169,8 +1602,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(sglang:prompt_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p50 {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_dram_capacity_bytes{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "YuanRong DRAM capacity",
           "range": true,
           "refId": "B"
         },
@@ -1180,8 +1613,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(sglang:prompt_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p90 {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_ssd_used_bytes{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "YuanRong SSD used",
           "range": true,
           "refId": "C"
         },
@@ -1191,58 +1624,39 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:prompt_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p99 {{model_name}} {{instance}}",
+          "expr": "max(ucm:yuanrong_ssd_capacity_bytes{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "YuanRong SSD capacity",
           "range": true,
           "refId": "D"
         }
       ],
-      "title": "Request Prompt Length",
+      "title": "Store Used and Capacity",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "description": "UCM Store 健康状态和探测结果，按所选 Job、模型及实例统计。",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 26,
+      "panels": [],
+      "title": "Store Health Metrics",
+      "type": "row"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native token-count histogram: sglang:generation_tokens_histogram.",
+      "description": "所选范围内，当前健康和不健康的 Posix 与 Mooncake Store 实例数。",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
           },
           "mappings": [],
           "thresholds": {
@@ -1254,32 +1668,73 @@
               }
             ]
           },
-          "unit": "suffix:tokens",
-          "min": 0
+          "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Healthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unhealthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "x": 12,
-        "y": 34,
-        "w": 12,
-        "h": 8
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 57
       },
-      "id": 11,
+      "id": 27,
       "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
           "displayMode": "table",
-          "maxHeight": "50%",
-          "placement": "bottom",
-          "showLegend": true
+          "placement": "right",
+          "showLegend": false,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
         },
         "tooltip": {
           "mode": "multi",
-          "sort": "desc"
+          "sort": "none"
         }
       },
       "targets": [
@@ -1289,10 +1744,11 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:generation_tokens_histogram_sum{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])) / sum by (${perWorker:raw}) (rate(sglang:generation_tokens_histogram_count{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "avg {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "A"
+          "expr": "sum({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "Healthy",
+          "range": false,
+          "refId": "A",
+          "instant": true
         },
         {
           "datasource": {
@@ -1300,56 +1756,116 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le, ${perWorker:raw}) (rate(sglang:generation_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p50 {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.9, sum by (le, ${perWorker:raw}) (rate(sglang:generation_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p90 {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le, ${perWorker:raw}) (rate(sglang:generation_tokens_histogram_bucket{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval])))",
-          "legendFormat": "p99 {{model_name}} {{instance}}",
-          "range": true,
-          "refId": "D"
+          "expr": "clamp_min(count({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}) - sum({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), 0)",
+          "legendFormat": "Unhealthy",
+          "range": false,
+          "refId": "B",
+          "instant": true
         }
       ],
-      "title": "Request Generation Length",
-      "type": "timeseries"
-    },
-    {
-      "id": 12,
-      "type": "row",
-      "title": "Scheduler and KV Cache",
-      "collapsed": false,
-      "panels": [],
-      "gridPos": {
-        "x": 0,
-        "y": 42,
-        "w": 24,
-        "h": 1
-      }
+      "title": "Store Health",
+      "type": "piechart"
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native request gauges; rank labels are retained rather than summed across TP replicas.",
+      "description": "按 Store 后端和健康状态统计当前实例数量。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 57
+      },
+      "id": 28,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "enablePagination": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(label_replace(sum(ucm:posix_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), \"store\", \"Posix\", \"__name__\", \".*\"), \"state\", \"Healthy\", \"__name__\", \".*\") or\nlabel_replace(label_replace(clamp_min(count(ucm:posix_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}) - sum(ucm:posix_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), 0), \"store\", \"Posix\", \"__name__\", \".*\"), \"state\", \"Unhealthy\", \"__name__\", \".*\") or\nlabel_replace(label_replace(sum(ucm:mooncake_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), \"store\", \"Mooncake\", \"__name__\", \".*\"), \"state\", \"Healthy\", \"__name__\", \".*\") or\nlabel_replace(label_replace(clamp_min(count(ucm:mooncake_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}) - sum(ucm:mooncake_store_health{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), 0), \"store\", \"Mooncake\", \"__name__\", \".*\"), \"state\", \"Unhealthy\", \"__name__\", \".*\")",
+          "legendFormat": "{{store}} {{state}}",
+          "range": false,
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "title": "Store Health Details",
+      "transformations": [
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "state",
+            "emptyValue": "null",
+            "rowField": "store",
+            "valueField": "Value"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {
+              "store": 0,
+              "Healthy": 1,
+              "Unhealthy": 2
+            },
+            "renameByName": {
+              "store": "Store"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "健康和不健康的 Store 实例数量随时间的变化。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1364,7 +1880,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1373,13 +1889,13 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": 60000,
+            "showPoints": "never",
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1393,30 +1909,66 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
               }
             ]
           },
           "unit": "short",
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Healthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Unhealthy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
+        "h": 8,
+        "w": 24,
         "x": 0,
-        "y": 43,
-        "w": 12,
-        "h": 8
+        "y": 65
       },
-      "id": 13,
+      "id": 29,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
+          "calcs": [],
+          "displayMode": "list",
           "maxHeight": "50%",
           "placement": "bottom",
           "showLegend": true
@@ -1433,8 +1985,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sglang:num_running_reqs{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
-          "legendFormat": "num_running_reqs {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "expr": "sum({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"})",
+          "legendFormat": "Healthy",
           "range": true,
           "refId": "A"
         },
@@ -1444,13 +1996,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sglang:num_queue_reqs{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
-          "legendFormat": "num_queue_reqs {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "expr": "clamp_min(count({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}) - sum({__name__=~\"ucm:(posix|mooncake)_store_health\", model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}), 0)",
+          "legendFormat": "Unhealthy",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Scheduler State",
+      "title": "Healthy and Unhealthy Store Count",
       "type": "timeseries"
     },
     {
@@ -1458,7 +2010,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Native KV token-slot utilization, not UCM Store capacity.",
+      "description": "每个查询窗口内 Posix 和 Mooncake 的健康及不健康探测次数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1473,7 +2025,7 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1482,13 +2034,13 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
-            "spanNulls": 60000,
+            "showPoints": "never",
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -1502,128 +2054,66 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
-              }
-            ]
-          },
-          "unit": "percentunit",
-          "min": 0
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 43,
-        "w": 12,
-        "h": 8
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "sglang:token_usage{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
-          "legendFormat": "token_usage {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "KV Cache Utilization",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Native scheduler cache-hit-rate gauge; this is not UCM linker lookup hit rate.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
               {
                 "color": "green",
-                "value": null
+                "value": 0.8
               }
             ]
           },
-          "unit": "percentunit",
+          "unit": "short",
           "min": 0
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* Healthy$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* Unhealthy$"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
+        "h": 8,
+        "w": 24,
         "x": 0,
-        "y": 51,
-        "w": 12,
-        "h": 8
+        "y": 73
       },
-      "id": 15,
+      "id": 30,
       "options": {
         "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
+          "calcs": [],
+          "displayMode": "list",
           "maxHeight": "50%",
           "placement": "bottom",
           "showLegend": true
@@ -1640,111 +2130,46 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sglang:cache_hit_rate{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}",
-          "legendFormat": "cache_hit_rate {{instance}} tp={{tp_rank}} dp={{dp_rank}} pp={{pp_rank}}",
+          "expr": "sum(increase(ucm:posix_healthy_count_total{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "Posix Healthy",
           "range": true,
           "refId": "A"
-        }
-      ],
-      "title": "Cache Hit Rate",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Native request retraction counter.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "spanNulls": 60000,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "reqps",
-          "min": 0
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 51,
-        "w": 12,
-        "h": 8
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "maxHeight": "50%",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum by (${perWorker:raw}) (rate(sglang:num_retracted_requests_total{job=~\"$job\",instance=~\"$instance\",model_name=~\"$model_name\"}[$__rate_interval]))",
-          "legendFormat": "retracted {{model_name}} {{instance}}",
+          "expr": "sum(increase(ucm:posix_unhealthy_count_total{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "Posix Unhealthy",
           "range": true,
-          "refId": "A"
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(ucm:mooncake_healthy_count_total{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "Mooncake Healthy",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(ucm:mooncake_unhealthy_count_total{model_name=~\"$model_name\", job=~\"$job\", instance=~\"$instance\"}[$__rate_interval]))",
+          "legendFormat": "Mooncake Unhealthy",
+          "range": true,
+          "refId": "D"
         }
       ],
-      "title": "Retracted Request Rate",
+      "title": "Store Health Probes",
       "type": "timeseries"
     }
   ]

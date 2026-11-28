@@ -212,7 +212,6 @@ class UcmDirectStoreAdapter:
         }
         return adapter
 
-    @_record_interface_duration
     def _estimate_gc_capacities(
         self, by_group: dict[str, list[UcmPoolMetadata]]
     ) -> dict[str, int]:
@@ -423,7 +422,6 @@ class UcmDirectStoreAdapter:
             for group in groups
         }
 
-    @_record_interface_duration
     def _ensure_store_schema(
         self,
         store_group: str,
@@ -555,7 +553,6 @@ class UcmDirectStoreAdapter:
             )
             return store
 
-    @_record_interface_duration
     def _block_ids(
         self, transfer: UcmLayerTransfer, page_keys: Iterable[str] | None = None
     ) -> list[bytes]:
@@ -582,7 +579,6 @@ class UcmDirectStoreAdapter:
             == end - max(0, end - trailing)
         ]
 
-    @_record_interface_duration
     def lookup(
         self,
         transfers: list[UcmLayerTransfer],
@@ -665,7 +661,6 @@ class UcmDirectStoreAdapter:
                 raise
         return candidates
 
-    @_record_interface_duration
     def _transfer_layout(self, transfer: UcmLayerTransfer) -> _TransferLayout:
         signature = (
             transfer.layers,
@@ -738,7 +733,6 @@ class UcmDirectStoreAdapter:
             bool(self._identity.get("rank_replicated", False)),
         )
 
-    @_record_interface_duration
     def _prepare_transfers(
         self, transfers: list[UcmLayerTransfer], *, is_offload: bool
     ) -> list[_PreparedStoreTransfer]:
@@ -796,7 +790,6 @@ class UcmDirectStoreAdapter:
                 by_layer.setdefault(layer, []).append(item)
         return by_layer
 
-    @_record_interface_duration
     def _submit_dump(
         self,
         item: _PreparedStoreTransfer,

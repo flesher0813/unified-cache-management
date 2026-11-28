@@ -5,9 +5,6 @@ from __future__ import annotations
 import threading
 from concurrent.futures import Future
 
-from ucm.integration.sglang.patch.layerwise_counter_metrics import record_layer_wait
-
-
 class LayerWiseLoadCounter:
     """Completion counter compatible with SGLang's KV-pool layer hooks."""
 
@@ -48,7 +45,6 @@ class LayerWiseLoadCounter:
             if not future.done():
                 future.set_exception(error)
 
-    @record_layer_wait
     def wait_until(self, threshold: int) -> None:
         with self._lock:
             index = self.consumer_index
